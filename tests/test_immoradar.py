@@ -209,6 +209,9 @@ class T03CollecteEtRecherche(unittest.TestCase):
         cls.srv, cls.url = start_fake()
         cls.old_home = licitor.HOME
         licitor.HOME = cls.url
+        prm = config.load()
+        prm["criteres"]["selection"] = False       # ces tests vérifient la collecte : tout afficher
+        config.save(prm)
         cls.old_mods = dict(pipeline.COLLECTORS)
         pipeline.COLLECTORS.pop("avoventes")  # pas de réseau ici
         pipeline.COLLECTORS.pop("vench")
@@ -922,3 +925,22 @@ class T18ClassementEtSeuil(unittest.TestCase):
         b = {"score_revente": 78, "score_locatif": None, "completude": 90}   # note un peu moins bonne, dossier complet
         self.assertLess(pipeline.SORTS["interet"]({**b, "classement": 0}), pipeline.SORTS["interet"]({**a, "classement": 0}))
         self.assertLess(pipeline.SORTS["note"](a), pipeline.SORTS["note"](b))
+
+
+class T19Selection(unittest.TestCase):
+    def test_pertinence(self):
+        base = {"status": "à venir", "risks": [], "score_revente": 75, "score_locatif": 40}
+        self.assertIsNone(pipeline.pertinence(base, 60))
+        self.assertIn("note", pipeline.pertinence({**base, "score_revente": 55}, 60))
+        self.assertIn("non notée", pipeline.pertinence({**base, "score_revente": None, "score_locatif": None}, 60))
+        self.assertIn("risque", pipeline.pertinence({**base, "risks": [{"severity": 3, "scope": "all"}]}, 60))
+        self.assertIsNone(pipeline.pertinence({**base, "risks": [{"severity": 3, "scope": "locatif"}]}, 60))
+        self.assertEqual(pipeline.pertinence({**base, "status": "adjugée"}, 60), "vente terminée")
+
+    def test_vente_classique(self):
+        c = config.load()["calculs"]
+        item = {"sale_kind": "amiable", "mise_a_prix": 200000}
+        prix, src = finance.prix_envisage(item, c)
+        self.assertEqual(prix, 200000)                         # pas de hausse d'enchères sur un prix affiché
+        lines = finance.frais_acquisition(prix, "amiable", c, item)
+        self.assertTrue(any("notaire" in str(l[0]).lower() for l in (lines[0] if isinstance(lines, tuple) else lines)))

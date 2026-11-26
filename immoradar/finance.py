@@ -18,7 +18,7 @@ def emoluments_vente_judiciaire(prix):
 
 def frais_acquisition(prix, sale_kind, c, item=None):
     lines = []
-    if sale_kind in ("notariale", "domaniale"):
+    if sale_kind in ("notariale", "domaniale", "amiable"):
         v = prix * c["frais_acquisition_notariale_pct"] / 100
         lines.append(("Frais d'acquisition (notaire, droits, frais de vente)", v, f"{c['frais_acquisition_notariale_pct']} % du prix", "hypothèse"))
     else:
@@ -76,6 +76,8 @@ def prix_envisage(item, c):
         return None, None
     if base == item.get("adjudication_price"):
         return base, "prix d'adjudication"
+    if item.get("sale_kind") == "amiable":
+        return base, "prix affiché (vente classique, négociation non comptée)"
     return base * (1 + c["hausse_encheres_pct"] / 100), f"mise à prix + {c['hausse_encheres_pct']} %"
 
 

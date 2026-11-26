@@ -130,6 +130,8 @@ function filtersHtml(c) {
   const inp = (k, ph) => `<input type="number" data-k="${k}" value="${c[k] ?? ""}" placeholder="${ph}">`;
   return `<div class="panel filters" id="filters">
     <div class="row space"><b>Filtres</b><button id="f-reset" class="small">Réinitialiser</button></div>
+    <div class="selbox"><label class="inline"><input type="checkbox" data-bool="selection" ${c.selection ? "checked" : ""}><b>Sélection : seulement les biens pertinents</b></label>
+    <div class="small muted">Vente à venir, sans risque juridique majeur, note ≥ ${inp("note_min", "60").replace('type="number"', 'type="number" style="width:60px;display:inline-block"')}</div></div>
     <label>Zones</label>${Object.entries(DEFS.zones).map(([k, z]) => ck("zones", k, z.label, c.zones)).join("")}
     <label>Départements (vide = toute la zone)</label>${deps.map(([k, n]) => ck("departements", k, k + " " + n, c.departements)).join("")}
     <label>Villes (séparées par des virgules)</label><input data-k="villes" value="${esc((c.villes || []).join(", "))}" placeholder="ex. Paris, Lyon, Villeurbanne">
@@ -177,7 +179,13 @@ async function viewAnnonces() {
     const crit = readFilters();
     const list = await api("/api/listings?sort=" + sortSel + "&criteria=" + encodeURIComponent(JSON.stringify(crit)));
     $("#count").textContent = `(${list.length})`;
-    $("#list").innerHTML = list.length ? list.map(c => cardHtml(c)).join("") : `<div class="panel muted">Aucune annonce ne correspond. Élargissez les filtres ou lancez une recherche depuis le tableau de bord.</div>`;
+    if (crit.selection) {
+      const all = await api("/api/listings?sort=" + sortSel + "&criteria=" + encodeURIComponent(JSON.stringify({...crit, selection: false})));
+      const out = all.filter(c => c.ecartee);
+      const why = {}; out.forEach(c => { const k = c.ecartee.replace(/\d+ < \d+/, "trop basse"); why[k] = (why[k] || 0) + 1; });
+      $("#count").innerHTML = `(${list.length}) <span class="small">· ${out.length} écartée(s) : ${Object.entries(why).map(([k, n]) => n + " " + esc(k)).join(", ")}</span>`;
+    }
+    $("#list").innerHTML = list.length ? list.map(c => cardHtml(c)).join("") : `<div class="panel muted">${crit.selection ? "Aucun bien ne passe la sélection pour l'instant. Décochez « Sélection » pour voir toutes les annonces, ou baissez la note minimale." : "Aucune annonce ne correspond. Élargissez les filtres ou lancez une recherche depuis le tableau de bord."}</div>`;
     bindCards($("#list"), refresh);
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { PARAMS.criteres = crit; post("/api/params", {criteres: crit}); }, 800);
@@ -403,16 +411,16 @@ function docAnalysisHtml(it, tools, reader) {
 function openImport(after) {
   $("#modal-body").innerHTML = `<h1>Importer une annonce manuellement</h1>
   <p class="small muted"><b>Le plus rapide :</b> collez le lien de l'annonce. Pour Licitor, Vench et Avoventes, ce lien suffit : ImmoRadar lit la page.
-  Pour Immobilier des notaires, Info-Enchères et Enchères du Domaine (lecture automatique non autorisée), ouvrez l'annonce, faites Cmd+A puis Cmd+C et collez le texte ci-dessous avec le lien : surface, pièces, mise à prix, date, ville, occupation et contacts sont extraits. Les autres champs sont facultatifs et priment s'ils sont remplis.</p>
+  Pour Immobilier des notaires, Info-Enchères, Enchères du Domaine et les annonces classiques SeLoger, Leboncoin, PAP, Bien'ici (lecture automatique non autorisée), ouvrez l'annonce, faites Cmd+A puis Cmd+C et collez le texte ci-dessous avec le lien : surface, pièces, mise à prix, date, ville, occupation et contacts sont extraits. Les autres champs sont facultatifs et priment s'ils sont remplis.</p>
   <div class="panel"><div class="grid g3">
-    <div><label>Source</label><select id="i-source"><option value="auto">(d'après le lien)</option><option value="notaires">Immobilier des notaires</option><option value="domaine">Enchères du Domaine</option><option value="licitor">Licitor</option><option value="avoventes">Avoventes</option><option value="vench">Vench</option><option value="infoencheres">Info-Enchères</option><option value="autre">Autre</option></select></div>
+    <div><label>Source</label><select id="i-source"><option value="auto">(d'après le lien)</option><option value="notaires">Immobilier des notaires</option><option value="domaine">Enchères du Domaine</option><option value="licitor">Licitor</option><option value="avoventes">Avoventes</option><option value="vench">Vench</option><option value="infoencheres">Info-Enchères</option><option value="seloger">SeLoger (vente classique)</option><option value="leboncoin">Leboncoin (vente classique)</option><option value="pap">PAP (vente classique)</option><option value="bienici">Bien'ici (vente classique)</option><option value="autre">Autre</option></select></div>
     <div style="grid-column:span 2"><label>Lien de l'annonce</label><input id="i-url" type="url" placeholder="https://…"></div>
     <div><label>Titre</label><input id="i-title"></div>
     <div><label>Type</label><select id="i-type"><option value="">(détecter)</option>${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
     <div><label>Adresse</label><input id="i-address"></div>
     <div><label>Ville</label><input id="i-city"></div><div><label>Code postal</label><input id="i-postcode"></div>
     <div><label>Surface m²</label><input id="i-surface" type="number"></div><div><label>Pièces</label><input id="i-rooms" type="number"></div>
-    <div><label>Mise à prix €</label><input id="i-mise_a_prix" type="number"></div><div><label>Date de vente</label><input id="i-sale_date" type="date"></div>
+    <div><label>Mise à prix (ou prix affiché) €</label><input id="i-mise_a_prix" type="number"></div><div><label>Date de vente</label><input id="i-sale_date" type="date"></div>
     <div><label>Lieu de vente</label><input id="i-sale_place"></div>
     <div><label>Occupation</label><select id="i-occupation"><option value="">(détecter)</option><option>libre</option><option>occupé</option></select></div>
   </div><label>Texte de l'annonce (copier-coller, facultatif pour Licitor, Vench, Avoventes)</label><textarea id="i-texte" rows="8"></textarea>

@@ -24,7 +24,7 @@ LISTINGS = {
     "lyon": "/ventes-aux-encheres-immobilieres/rhone-alpes.html",
 }
 ANNONCE_RX = re.compile(r"/annonce/\d+/\d+/\d+/vente-aux-encheres/([^/\"'?#]+)/([^/\"'?#]+)/([^/\"'?#]+)/(\d+)\.html")
-MAX_PAGES = 8
+MAX_PAGES = 15
 MAX_DETAILS = 70
 LAST_WARNING = None
 
@@ -120,6 +120,17 @@ def parse_detail(html, url, meta_hint=None):
     return d
 
 
+LAST_INFO = None
+
+
+def _fresh(collected_at, hours=20):
+    from datetime import datetime
+    try:
+        return (datetime.now().astimezone() - datetime.fromisoformat(collected_at)).total_seconds() < hours * 3600
+    except Exception:
+        return False
+
+
 def collect(deps, known, log):
     """Collecte tolérante aux coupures : une zone ou une fiche qui échoue n'annule pas le reste.
     Après 3 échecs réseau consécutifs, on s'arrête (le site est peut-être surchargé) et on garde ce qui a été lu."""
@@ -142,6 +153,10 @@ def collect(deps, known, log):
     log(f"Licitor : {len(wanted)} annonces dans les départements choisis (sur {len(listed)})")
     # nouvelles d'abord, puis les plus anciennement actualisées
     order = sorted(wanted, key=lambda s: (s in known, known.get(s) or ""))
+    global LAST_INFO
+    fresh = [s for s in order if _fresh(known.get(s))]
+    order = [s for s in order if s not in set(fresh)]   # déjà lue il y a moins de 20 h : inutile de la relire
+    LAST_INFO = f"{len(wanted)} annonce(s) listée(s), dont {len(fresh)} déjà à jour (lues il y a moins de 20 h)" if fresh else None
     out, errors, consecutive = [], [], 0
     for sid in order[:MAX_DETAILS]:
         h = wanted[sid]

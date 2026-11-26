@@ -91,3 +91,4 @@ ul.avis{margin:0;padding-left:18px}ul.avis li{margin:3px 0}
 .contact{padding:8px 0;border-bottom:1px solid var(--line)}.contact .row{gap:12px;margin-top:2px}
 #dm-body{font-family:inherit;line-height:1.45}
 .newbox{border:2px solid var(--ok);margin-top:14px}
+.selbox{background:var(--bg,#f4f6f8);border-radius:8px;padding:8px;margin:6px 0}

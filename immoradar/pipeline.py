@@ -196,6 +196,9 @@ def log(msg):
     print(msg, flush=True)
 
 
+DOCS_PER_RUN = 30
+
+
 def run_search(trigger="manuelle"):
     if not _run_lock.acquire(blocking=False):
         return None
@@ -234,6 +237,9 @@ def _run(run_id):
                     st.update(status="ok" if items else "vide",
                               message=f"{len(items)} annonce(s) lue(s), dont {st['new']} nouvelle(s)" if items else
                               "La source a répondu mais aucune annonce n'a été reconnue.")
+                    info = getattr(mod, "LAST_INFO", None)
+                    if info:
+                        st.update(status="ok", message=(f"{len(items)} annonce(s) lue(s), dont {st['new']} nouvelle(s) ; " if items else "") + info)
                     warn = getattr(mod, "LAST_WARNING", None)
                     if warn:
                         st.update(status="partiel", message=st["message"] + " — " + warn)
@@ -256,9 +262,12 @@ def _run(run_id):
         STATE["step"] = "lecture des documents"
         analysed = 0
         crit = params["criteres"]
-        for r in db.q("SELECT * FROM listings"):
-            if analysed >= 15:
-                log("Documents : limite de 15 annonces par recherche atteinte, la suite à la prochaine recherche")
+        def _promise(r):
+            sc = (json.loads(r["analysis"] or "{}").get("scores") or {})
+            return -max((sc.get("revente") or {}).get("score") or 0, (sc.get("locatif") or {}).get("score") or 0)
+        for r in sorted(db.q("SELECT * FROM listings"), key=_promise):   # les biens les mieux notés d'abord
+            if analysed >= DOCS_PER_RUN:
+                log(f"Documents : limite de {DOCS_PER_RUN} annonces par recherche atteinte, la suite à la prochaine recherche")
                 break
             data = json.loads(r["data"])
             if not data.get("documents") or {d.get("url") for d in data["documents"]} <= {d.get("origin") for d in data.get("doc_analyses", [])}:
@@ -404,6 +413,20 @@ def completude(item, est_ok):
     return got, missing
 
 
+def pertinence(c, note_min=60):
+    """Sélection : None si le bien est pertinent, sinon la raison de l'écarter (affichée dans « Tout voir »)."""
+    if c["status"] in ("adjugée", "retirée"):
+        return "vente terminée"
+    if any(r.get("severity", 1) >= 3 and r.get("scope") in (None, "all") for r in c.get("risks") or []):
+        return "risque juridique majeur"
+    best = max(c["score_revente"] or -1, c["score_locatif"] or -1)
+    if best < 0:
+        return "non notée (estimation impossible)"
+    if best < note_min:
+        return f"note {best} < {note_min}"
+    return None
+
+
 def classement(c):
     """Classement par défaut : 70 % la meilleure note, 30 % la complétude du dossier."""
     best = max(c["score_revente"] or 0, c["score_locatif"] or 0)
@@ -486,8 +509,12 @@ def list_cards(crit=None, sort="interet", favorites=False, show_hidden=False):
         if not favorites and not matches(item, crit, deps):
             continue
         out.append(card(row, lr))
+    note_min = float(crit.get("note_min") or 0)
     for c in out:
         c["classement"] = classement(c)
+        c["ecartee"] = pertinence(c, note_min)
+    if crit.get("selection") and not favorites:
+        out = [c for c in out if not c["ecartee"]]
     out.sort(key=SORTS.get(sort, SORTS["interet"]))
     return out
 
@@ -499,7 +526,9 @@ def _host(url):
 
 def source_for_url(url):
     h = _host(url)
-    return next((m for m in COLLECTORS.values() if h and _host(m.HOME) == h), None) if h else None
+    if not h:
+        return None
+    return next((m for m in COLLECTORS.values() if _host(m.HOME) == h or h in getattr(m, "DOMAINS", {})), None)
 
 
 def _finish_import(d):
@@ -535,7 +564,7 @@ def manual_import(fields):
         return import_url(url)
     if url and not fields.get("source") or fields.get("source") == "auto":
         mod = source_for_url(url)
-        fields = {**fields, "source": mod.NAME if mod else "autre"}
+        fields = {**fields, "source": (getattr(mod, "DOMAINS", {}).get(_host(url)) or mod.NAME) if mod else "autre"}
     d = extract.analyse_text(text) if text else {}
     if text and not fields.get("city"):
         cp = re.search(r"\b(\d{5})\s+([A-ZÉÈÀ][\w'’ -]{1,40}?)\s*(?:\n|$|,|\()", text)
@@ -560,7 +589,12 @@ def manual_import(fields):
     if d.get("postcode"):
         d["dep"] = dep_from_postcode(d["postcode"])
     if not d.get("sale_kind"):
-        d["sale_kind"] = {"notaires": "notariale", "domaine": "domaniale"}.get(src, "judiciaire")
+        d["sale_kind"] = {"notaires": "notariale", "domaine": "domaniale", "seloger": "amiable", "leboncoin": "amiable",
+                          "pap": "amiable", "bienici": "amiable", "classiques": "amiable"}.get(src, "judiciaire")
+    if d["sale_kind"] == "amiable" and not d.get("mise_a_prix") and text:
+        pm = re.search(r"(?:prix|vendu|€)\D{0,20}?" + extract.NUM + r"\s*(?:€|euros)", text, re.I)
+        if pm and extract.to_number(pm.group(1), pm.group(2)) >= 10000:
+            d["mise_a_prix"] = extract.to_number(pm.group(1), pm.group(2))
     return _finish_import(d)
 
 

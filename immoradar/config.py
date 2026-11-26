@@ -18,6 +18,8 @@ DEFAULTS = {
         "date_min": None, "date_max": None,
         "types_vente": [],           # judiciaire, notariale, domaniale
         "inclure_passees": False,
+        "selection": True,           # n'afficher que les biens pertinents (voir pipeline.pertinence)
+        "note_min": 60,              # note minimale (meilleure des deux) pour la sélection
     },
     "sources": {"licitor": True, "vench": True, "avoventes": True, "notaires": False, "domaine": False},
     "signature": "",                 # signature des mails de demande d'informations

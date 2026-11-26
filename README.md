@@ -54,6 +54,7 @@ erreur, le bouton « Créer un diagnostic » du tableau de bord enregistre les p
 | Avoventes | automatique (expérimental) | robots.txt autorise tout ; structure HTML non vérifiée : `python3 run.py --diagnostic` enregistre les pages reçues pour écrire un vrai lecteur |
 | Immobilier des notaires | import manuel | CGU art. 5 : reproduction des annonces interdite |
 | Info-Enchères | import manuel | CGU : usage strictement personnel, copie et reproduction interdites |
+| Annonces classiques (SeLoger, Leboncoin, PAP, Bien'ici) | import manuel | Leboncoin interdit expressément les robots ; robots.txt de PAP et Bien'ici fermés aux annonces ; SeLoger refuse les robots. Import d'une annonce ouverte soi-même (lien + texte), analysée comme vente classique |
 | Enchères du Domaine | import manuel | application 100 % JavaScript avec cookies obligatoires, pas d'API publique |
 
 Import manuel : collez le lien de l'annonce. Pour Licitor, Vench et Avoventes le lien suffit ; pour les autres,
@@ -66,6 +67,7 @@ collez aussi le texte de la page (Cmd+A, Cmd+C).
 - Pas d'estimation si moins de 6 comparables DVF (paramétrable) ou si surface / localisation manquent.
 - Toutes les hypothèses de calcul sont visibles ligne par ligne et modifiables (Paramètres, ou par fiche).
 - Un risque juridique majeur (démembrement, squat, péril, copropriété en difficulté) plafonne la note à 40.
+- Vue « Sélection » (par défaut) : vente à venir, sans risque juridique majeur, note ≥ 60 (réglable) ; le nombre de biens écartés et la raison sont affichés.
 - « Opportunité intéressante » = note ≥ 80 (réglable). Classement par défaut : 70 % meilleure note + 30 % complétude du dossier (PV, cahier, diagnostics lus, estimation, données connues).
 
 ## Documents de vente (PV descriptif, cahier des conditions de vente, diagnostics)

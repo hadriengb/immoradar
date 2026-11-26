@@ -20,7 +20,7 @@ MODE = "auto"
 LEGAL = ("robots.txt autorise les pages de vente (seul /upload/ est exclu) ; mentions légales sans clause interdisant "
          "la collecte. Descriptions réservées aux abonnés non lues ; emails masqués non décodés.")
 VENTE_RX = re.compile(r"(?:https?://(?:www\.)?vench\.fr)?/vente-(\d+)-([a-z0-9-]+)\.html", re.I)
-MAX_PAGES_DEP = 4
+MAX_PAGES_DEP = 8
 MAX_DETAILS = 60
 
 
@@ -100,6 +100,17 @@ def parse_detail(html, url, hint=None):
     return d
 
 
+LAST_INFO = None
+
+
+def _fresh(collected_at, hours=20):
+    from datetime import datetime
+    try:
+        return (datetime.now().astimezone() - datetime.fromisoformat(collected_at)).total_seconds() < hours * 3600
+    except Exception:
+        return False
+
+
 def collect(deps, known, log):
     deps = [d for d in deps if d in DEPARTEMENTS]
     client = PoliteClient(HOME, min_delay=3.0, max_requests=len(deps) * MAX_PAGES_DEP + MAX_DETAILS + 5)
@@ -116,6 +127,10 @@ def collect(deps, known, log):
     if failed and not listed:
         raise FetchError(f"aucune liste lisible ({', '.join(failed)})")
     order = sorted(listed, key=lambda s: (s in known, known.get(s) or ""))
+    global LAST_INFO
+    fresh = [s for s in order if _fresh(known.get(s))]
+    order = [s for s in order if s not in set(fresh)]   # déjà lue il y a moins de 20 h : inutile de la relire
+    LAST_INFO = f"{len(listed)} annonce(s) listée(s), dont {len(fresh)} déjà à jour (lues il y a moins de 20 h)" if fresh else None
     out, errors = [], []
     for sid in order[:MAX_DETAILS]:
         url = HOME + listed[sid]["path"]
