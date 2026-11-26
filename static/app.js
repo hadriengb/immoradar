@@ -10,7 +10,7 @@ const dfr = s => s ? new Date(s.length <= 10 ? s + "T12:00:00" : s).toLocaleDate
 const dtfr = s => s ? new Date(s).toLocaleString("fr-FR", {day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"}) : "jamais";
 const TYPES = {appartement: "Appartement", maison: "Maison", studio: "Studio", immeuble: "Immeuble", local_commercial: "Local commercial", parking: "Parking", terrain: "Terrain"};
 const STATUS_CLS = {"nouvelle": "b-ok", "à venir": "", "adjugée": "b-mute", "retirée": "b-bad"};
-const SRC_CLS = {ok: "b-ok", vide: "b-warn", erreur: "b-bad", "bloquée": "b-bad", manuel: "b-mute", "désactivée": "b-mute"};
+const SRC_CLS = {ok: "b-ok", partiel: "b-warn", vide: "b-warn", erreur: "b-bad", "bloquée": "b-bad", manuel: "b-mute", "désactivée": "b-mute"};
 
 async function api(path, opts = {}) {
   const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
@@ -79,16 +79,21 @@ async function viewDash() {
     <tr><td><b>${esc(x.label)}</b><div class="small muted">${esc(x.legal)}</div></td>
     <td><span class="badge ${SRC_CLS[x.status] || "b-mute"}">${esc(x.status)}</span></td>
     <td class="small">${esc(x.message)}${x.at ? `<div class="muted">${dtfr(x.at)}</div>` : ""}
+    ${x.mode === "auto" && ["vide", "erreur", "partiel"].includes(x.status) ? `<div style="margin-top:4px"><button class="small" data-diag="${esc(x.name)}">📦 Créer un diagnostic à m'envoyer</button> <span class="small" id="diag-${esc(x.name)}"></span></div>` : ""}
     ${x.mode === "manuel" && x.links ? `<details><summary>Ouvrir la source et importer à la main</summary>${x.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join("<br>")}<br><a href="#/parametres" >→ formulaire d'import manuel</a></details>` : ""}</td></tr>`).join("");
   const dvf = s.dvf.departements.length ? s.dvf.departements.map(d => `${esc(d.dep)} (${esc(d.years)} · ${d.n.toLocaleString("fr-FR")} ventes)`).join(", ") : "aucune donnée chargée";
   app.innerHTML = `
   <button class="bigbtn" id="go" ${s.running ? "disabled" : ""}>${s.running ? "⏳ Recherche en cours… " + esc(s.step) : "🔎 LANCER UNE RECHERCHE"}</button>
   <div class="grid g4" style="margin-top:14px">
     <div class="panel kpi"><div class="v">${s.matching}</div><div class="l">annonces correspondant aux critères<br><span class="small">${s.total_stored} enregistrées au total</span></div></div>
-    <div class="panel kpi"><div class="v">${s.new}</div><div class="l">nouvelles (dernière recherche)</div></div>
+    <div class="panel kpi"><div class="v">${s.new}</div><div class="l">nouvelles (pas encore vues)</div></div>
     <div class="panel kpi"><div class="v">${s.opportunities}</div><div class="l">opportunités (note ≥ ${s.seuil})</div></div>
     <div class="panel kpi"><div class="v" style="font-size:17px">${lr ? dtfr(lr.finished_at || lr.started_at) : "jamais"}</div><div class="l">dernière actualisation${lr ? " · " + esc(lr.status) : ""}</div></div>
   </div>
+  ${s.new_cards.length ? `<div class="panel newbox"><div class="row space"><h2 style="margin:0">🆕 ${s.new} nouvelle(s) annonce(s)${lr && lr.summary && lr.summary.declencheur === "automatique" ? " trouvée(s) par la recherche automatique du " + esc(dtfr(lr.started_at)) : ""}</h2>
+    <button id="seen">Marquer comme vues</button></div><div class="cards" id="newcards">${s.new_cards.map(c => cardHtml(c)).join("")}</div>
+    ${s.new > s.new_cards.length ? `<p class="small"><a href="#/annonces">Voir les ${s.new} dans Annonces</a></p>` : ""}</div>` : ""}
+  <p class="small muted">⏰ Recherche automatique : ${s.automation.active ? `tous les matins à partir de ${s.automation.heure} h quand ImmoRadar est ouvert${s.automation.available ? (s.automation.installed ? ", et aussi application fermée (lancement automatique du Mac installé)" : " · <a href=\"#/parametres\">l'activer aussi application fermée</a>") : ""}` : `désactivée · <a href="#/parametres">l'activer</a>`}.</p>
   ${s.running || (s.log && s.log.length) ? `<h2>Journal de la recherche</h2><div class="log" id="log">${esc(s.log.join("\n"))}</div>` : ""}
   <h2>État des sources</h2>
   <div class="panel"><table><thead><tr><th>Source</th><th>État</th><th>Détail</th></tr></thead><tbody>${srcRows}</tbody></table></div>
@@ -100,6 +105,17 @@ async function viewDash() {
   <div class="cards" id="top">${s.top.length ? s.top.map(c => cardHtml(c)).join("") : '<p class="muted">Aucune annonce enregistrée pour le moment. Lancez une recherche ou importez une annonce.</p>'}</div>`;
   $("#go").onclick = async () => { await post("/api/search", {}); viewDash(); };
   bindCards($("#top"), viewDash);
+  if ($("#newcards")) bindCards($("#newcards"), viewDash);
+  if ($("#seen")) $("#seen").onclick = async () => { await post("/api/seen", {}); viewDash(); };
+  document.querySelectorAll("[data-diag]").forEach(b => b.onclick = async () => {
+    const out = $("#diag-" + b.dataset.diag);
+    b.disabled = true; out.textContent = "Lecture polie de quelques pages (1 à 2 minutes)…";
+    try {
+      const r = await post("/api/diagnostic", {source: b.dataset.diag});
+      out.innerHTML = `${r.pages} page(s) enregistrée(s), ${r.items ?? 0} annonce(s) reconnue(s). <a href="/api/diagnostic/${encodeURIComponent(r.name)}" download>⬇️ Télécharger ${esc(r.name)}</a> puis envoyez-le moi.`;
+    } catch (e) { out.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+    b.disabled = false;
+  });
   const lg = $("#log"); if (lg) lg.scrollTop = lg.scrollHeight;
   clearTimeout(pollTimer);
   if (s.running) pollTimer = setTimeout(() => { if (location.hash === "" || location.hash === "#/") viewDash(); }, 2000);
@@ -437,7 +453,11 @@ async function viewParams() {
   app.innerHTML = `<h1>Paramètres</h1>
   <h2>Sources</h2><div class="panel"><table><tbody>${s.sources_def.map(x => `<tr><td><b>${esc(x.label)}</b><div class="small"><a href="${esc(x.home)}" target="_blank" rel="noopener">${esc(x.home)}</a></div></td>
     <td class="small">${esc(x.legal)}</td><td>${x.mode === "auto" ? `<label class="inline"><input type="checkbox" data-src="${x.name}" ${p.sources[x.name] !== false ? "checked" : ""}>collecte automatique</label>` : '<span class="badge b-mute">import manuel</span>'}</td></tr>`).join("")}</tbody></table>
-    <div class="grid g3"><div><label>Actualisation automatique (heures, 0 = désactivée, l'application doit rester ouverte)</label><input type="number" id="auto-h" value="${p.actualisation_auto_heures}"></div></div>
+    <h3>Recherche automatique du matin</h3>
+    <div class="grid g3"><div><label>Recherche automatique</label><select id="ra-active"><option value="1" ${s.automation.active ? "selected" : ""}>tous les matins</option><option value="0" ${!s.automation.active ? "selected" : ""}>désactivée</option></select></div>
+    <div><label>À partir de (heure)</label><select id="ra-heure">${[5, 6, 7, 8, 9, 10].map(h => `<option value="${h}" ${s.automation.heure === h ? "selected" : ""}>${h} h</option>`).join("")}</select></div></div>
+    <p class="small muted">Une seule recherche par jour (lecture lente et polie des sites). Si ImmoRadar est fermé à cette heure-là, la recherche part dès son ouverture.</p>
+    ${s.automation.available ? `<p class="small">${s.automation.installed ? "✅ Lancement automatique du Mac installé : la recherche se fait aussi application fermée (le Mac doit être allumé ou en veille ; elle part au réveil sinon). <button id=\"ra-uninstall\">Désinstaller</button>" : "<button id=\"ra-install\">Activer aussi quand l'application est fermée (Mac)</button> Rien à taper : ImmoRadar installe une tâche du matin dans votre session macOS."}</p><p class="small muted" id="ra-msg"></p>` : ""}
     <p class="small"><button id="imp2">+ Importer une annonce manuellement</button></p></div>
   <h2>Mails de demande d'informations</h2><div class="panel"><label>Signature ajoutée en bas des mails préparés (nom, téléphone, email)</label><textarea id="signature" rows="3" placeholder="Prénom Nom\n06 00 00 00 00">${esc(p.signature || "")}</textarea></div>
   <h2>Zones et critères</h2><div class="panel small">Les critères de recherche (zones, départements, villes, types, surfaces, prix, occupation, extérieurs, dates, types de vente) se règlent dans le panneau de filtres de l'onglet <a href="#/annonces">Annonces</a> et sont enregistrés automatiquement. Zones prédéfinies : ${Object.values(DEFS.zones).map(z => esc(z.label) + " (" + z.deps.join(", ") + ")").join(" · ")}.<br>
@@ -458,7 +478,7 @@ async function viewParams() {
       if (i.dataset.g === "travaux_m2") np.calculs.travaux_m2[i.dataset.k] = v; else np[i.dataset.g][i.dataset.k] = v;
     });
     document.querySelectorAll("[data-src]").forEach(i => np.sources[i.dataset.src] = i.checked);
-    np.actualisation_auto_heures = +$("#auto-h").value || 0;
+    await post("/api/automation", {active: $("#ra-active").value === "1", heure: +$("#ra-heure").value});
     np.signature = $("#signature").value;
     np.scoring.seuil_opportunite = +$("#seuil").value || 60;
     $("#msg").textContent = "Recalcul…";
@@ -466,6 +486,10 @@ async function viewParams() {
     $("#msg").textContent = "Enregistré, toutes les annonces ont été recalculées.";
   };
   $("#reset").onclick = async () => { await post("/api/params/reset", {}); viewParams(); };
+  ["ra-active", "ra-heure"].forEach(i => $("#" + i).onchange = async () => { await post("/api/automation", {active: $("#ra-active").value === "1", heure: +$("#ra-heure").value}); });
+  const raAct = async (action) => { $("#ra-msg").textContent = "…"; try { await post("/api/automation", {action}); viewParams(); } catch (e) { $("#ra-msg").textContent = e.message; } };
+  if ($("#ra-install")) $("#ra-install").onclick = () => raAct("install");
+  if ($("#ra-uninstall")) $("#ra-uninstall").onclick = () => raAct("uninstall");
   $("#imp2").onclick = () => openImport();
   $("#dvf-go").onclick = async () => {
     const ds = [...document.querySelectorAll("[data-dvf]:checked")].map(i => i.dataset.dvf);

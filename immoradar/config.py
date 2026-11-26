@@ -19,9 +19,10 @@ DEFAULTS = {
         "types_vente": [],           # judiciaire, notariale, domaniale
         "inclure_passees": False,
     },
-    "sources": {"licitor": True, "avoventes": True, "notaires": False, "domaine": False},
+    "sources": {"licitor": True, "vench": True, "avoventes": True, "notaires": False, "domaine": False},
     "signature": "",                 # signature des mails de demande d'informations
-    "actualisation_auto_heures": 0,   # 0 = désactivée
+    "actualisation_auto_heures": 0,   # ancien réglage, remplacé par recherche_auto
+    "recherche_auto": {"active": True, "heure": 7},   # une recherche par jour, à partir de cette heure
     "estimation": {
         "annees": 3,
         "tolerance_surface": 0.4,

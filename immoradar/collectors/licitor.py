@@ -10,7 +10,7 @@ import urllib.parse
 
 from .. import contacts, extract
 from ..geo_fr import ZONES, dep_from_slug, dep_from_text
-from ..net import PoliteClient
+from ..net import FetchError, PoliteClient, ProtectionDetected, RobotsDisallowed
 
 NAME = "licitor"
 LABEL = "Licitor"
@@ -26,6 +26,7 @@ LISTINGS = {
 ANNONCE_RX = re.compile(r"/annonce/\d+/\d+/\d+/vente-aux-encheres/([^/\"'?#]+)/([^/\"'?#]+)/([^/\"'?#]+)/(\d+)\.html")
 MAX_PAGES = 8
 MAX_DETAILS = 70
+LAST_WARNING = None
 
 
 def manual_links(deps):
@@ -42,7 +43,13 @@ def list_announcements(client, zone, log):
     found, seen_pages = {}, 0
     for page in range(1, MAX_PAGES + 1):
         url = LISTINGS[zone] + (f"?p={page}" if page > 1 else "")
-        html = client.get(url)
+        try:
+            html = client.get(url)
+        except FetchError as e:
+            if page == 1 or isinstance(e, (ProtectionDetected, RobotsDisallowed)):
+                raise
+            log(f"Licitor {zone} : page {page} illisible ({e}), on garde les {len(found)} annonces déjà listées")
+            break
         seen_pages += 1
         before = len(found)
         for m in ANNONCE_RX.finditer(html):
@@ -114,27 +121,48 @@ def parse_detail(html, url, meta_hint=None):
 
 
 def collect(deps, known, log):
+    """Collecte tolérante aux coupures : une zone ou une fiche qui échoue n'annule pas le reste.
+    Après 3 échecs réseau consécutifs, on s'arrête (le site est peut-être surchargé) et on garde ce qui a été lu."""
+    global LAST_WARNING
+    LAST_WARNING = None
     client = PoliteClient(HOME, min_delay=3.0, max_requests=MAX_PAGES * 2 + MAX_DETAILS + 5)
     zones = [z for z, cfg in ZONES.items() if set(cfg["deps"]) & set(deps)]
-    listed = {}
+    listed, zone_errors = {}, []
     for z in zones:
-        listed.update(list_announcements(client, z, log))
+        try:
+            listed.update(list_announcements(client, z, log))
+        except FetchError as e:
+            if "protection" in str(e).lower() or isinstance(e, (ProtectionDetected, RobotsDisallowed)):
+                raise
+            zone_errors.append(f"{z} : {e}")
+            log(f"Licitor {z} : liste illisible ({e})")
+    if not listed and zone_errors:
+        raise FetchError("; ".join(zone_errors))
     wanted = {sid: h for sid, h in listed.items() if (dep_from_slug(h["dep_slug"]) in deps)}
     log(f"Licitor : {len(wanted)} annonces dans les départements choisis (sur {len(listed)})")
     # nouvelles d'abord, puis les plus anciennement actualisées
     order = sorted(wanted, key=lambda s: (s in known, known.get(s) or ""))
-    out, errors = [], []
+    out, errors, consecutive = [], [], 0
     for sid in order[:MAX_DETAILS]:
         h = wanted[sid]
         url = HOME + h["path"]
         try:
             out.append(parse_detail(client.get(url), url, h))
+            consecutive = 0
+        except (ProtectionDetected, RobotsDisallowed):
+            raise
         except Exception as e:
             errors.append(f"{url} : {e}")
-            if "protection" in str(e).lower():
-                raise
+            consecutive += 1
+            if consecutive >= 3:
+                log("Licitor : 3 coupures de suite, arrêt pour ne pas insister ; la suite sera lue à la prochaine recherche")
+                break
     if len(order) > MAX_DETAILS:
         log(f"Licitor : {len(order) - MAX_DETAILS} annonces reportées à la prochaine recherche (limite de {MAX_DETAILS} pages par recherche)")
     for e in errors[:5]:
         log("Licitor erreur : " + e)
+    if errors or zone_errors or client.retries:
+        LAST_WARNING = (f"{len(out)} fiche(s) lue(s) ; {len(errors) + len(zone_errors)} page(s) en échec"
+                        + (f", {client.retries} nouvel(s) essai(s) après coupure" if client.retries else "")
+                        + ". Les annonces déjà enregistrées restent affichées.")
     return out

@@ -196,9 +196,10 @@ def log(msg):
     print(msg, flush=True)
 
 
-def run_search():
+def run_search(trigger="manuelle"):
     if not _run_lock.acquire(blocking=False):
         return None
+    STATE["trigger"] = trigger
     STATE.update(running=True, log=[], step="démarrage")
     run_id = db.x("INSERT INTO runs(started_at,status) VALUES (?,?)", (db.now_iso(), "en cours"))
     STATE["run_id"] = run_id
@@ -207,7 +208,7 @@ def run_search():
 
 
 def _run(run_id):
-    sources, summary = [], {"trouvees": 0, "nouvelles": 0, "mises_a_jour": 0}
+    sources, summary = [], {"trouvees": 0, "nouvelles": 0, "mises_a_jour": 0, "declencheur": STATE.get("trigger", "manuelle")}
     try:
         params = config.load()
         deps = criteria_deps(params["criteres"])
@@ -233,12 +234,17 @@ def _run(run_id):
                     st.update(status="ok" if items else "vide",
                               message=f"{len(items)} annonce(s) lue(s), dont {st['new']} nouvelle(s)" if items else
                               "La source a répondu mais aucune annonce n'a été reconnue.")
+                    warn = getattr(mod, "LAST_WARNING", None)
+                    if warn:
+                        st.update(status="partiel", message=st["message"] + " — " + warn)
                 except RobotsDisallowed as e:
                     st.update(status="bloquée", message=f"Interdit par robots.txt : {e}")
                 except ProtectionDetected as e:
                     st.update(status="bloquée", message=f"Protection anti-robot détectée, collecte arrêtée sans contournement : {e}")
                 except FetchError as e:
-                    st.update(status="erreur", message=f"Source injoignable : {e}")
+                    n_old = db.q("SELECT COUNT(*) AS n FROM listing_sources WHERE source=?", (name,))[0]["n"]
+                    st.update(status="erreur", message=f"Source injoignable : {e}. Nouvel essai automatique à la prochaine "
+                              f"recherche ; les {n_old} annonce(s) déjà lues restent affichées.")
                 except Exception as e:
                     st.update(status="erreur", message=f"Erreur du collecteur : {type(e).__name__}: {e}")
                     log(traceback.format_exc())
@@ -309,7 +315,8 @@ def listing_status(row, item, last_run):
     hint = item.get("status_hint")
     if hint in ("adjugée", "retirée"):
         return hint
-    if row["first_run_id"] and row["first_run_id"] == last_run:
+    seen = _seen_run()
+    if row["first_run_id"] and (row["first_run_id"] > seen if seen is not None else row["first_run_id"] == last_run):
         return "nouvelle"
     sd = item.get("sale_date")
     if sd:
@@ -412,6 +419,17 @@ SORTS = {
     "date": lambda c: c["sale_date"] or "9999",
     "surface": lambda c: -(c["surface"] or 0),
 }
+
+
+_seen_cache = {"t": 0, "v": None}
+
+
+def _seen_run():
+    """Dernière recherche dont les nouveautés ont été vues (bouton « Marquer comme vues ») ; mis en cache 2 s."""
+    import time as _t
+    if _t.time() - _seen_cache["t"] > 2:
+        _seen_cache.update(t=_t.time(), v=db.get_setting("seen_run_id"))
+    return _seen_cache["v"]
 
 
 def last_run_id():

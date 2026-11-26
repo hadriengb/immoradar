@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contacts, config, db, documents, opendata, pipeline
+from . import automation, contacts, config, db, documents, opendata, pipeline
 from .collectors import ALL as COLLECTORS
 from .geo_fr import DEPARTEMENTS, ZONES
 
@@ -34,6 +34,9 @@ def dashboard():
         "total_stored": total,
         "matching": len(cards),
         "new": sum(1 for c in cards if c["status"] == "nouvelle"),
+        "new_cards": [c for c in cards if c["status"] == "nouvelle"][:12],
+        "automation": {**automation.settings(), **automation.launch_agent_status(), "due": automation.search_due(),
+                       "last_trigger": (json.loads(last["summary"] or "{}").get("declencheur") if last else None)},
         "opportunities": sum(1 for c in cards if max(c["score_revente"] or 0, c["score_locatif"] or 0) >= seuil),
         "top": cards[:5],
         "seuil": seuil,
@@ -124,6 +127,19 @@ class H(BaseHTTPRequestHandler):
                 return self._json([detail(i) for i in ids if detail(i)])
             if p == "/api/params":
                 return self._json({"params": config.load(), "defaults": config.DEFAULTS, "zones": ZONES, "departements": DEPARTEMENTS})
+            if p.startswith("/api/diagnostic/"):
+                f = automation.diagnostic_file(urllib.parse.unquote(p.rsplit("/", 1)[1]))
+                if not f:
+                    return self._json({"error": "introuvable"}, 404)
+                with open(f, "rb") as fh:
+                    data = fh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(f)}"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if p == "/api/runs":
                 return self._json([dict(r) for r in db.q("SELECT id, started_at, finished_at, status, summary, sources FROM runs ORDER BY id DESC LIMIT 20")])
             return self._static(p)
@@ -171,6 +187,31 @@ class H(BaseHTTPRequestHandler):
                 db.set_setting("params", {})
                 pipeline.analyse_all()
                 return self._json({"ok": True})
+            if p == "/api/seen":
+                db.set_setting("seen_run_id", pipeline.last_run_id())
+                pipeline._seen_cache["t"] = 0
+                return self._json({"ok": True})
+            if p == "/api/automation":
+                body = json.loads(self._body() or b"{}")
+                if "heure" in body or "active" in body:
+                    prm = config.load()
+                    ra = automation.settings(prm)
+                    ra.update({k: body[k] for k in ("heure", "active") if k in body})
+                    ra["heure"] = max(0, min(23, int(ra["heure"])))
+                    prm["recherche_auto"] = ra
+                    config.save(prm)
+                    automation.refresh_launch_agent()
+                if body.get("action") == "install":
+                    automation.install_launch_agent()
+                elif body.get("action") == "uninstall":
+                    automation.uninstall_launch_agent()
+                return self._json({**automation.settings(), **automation.launch_agent_status()})
+            if p == "/api/diagnostic":
+                if pipeline.STATE["running"]:
+                    raise ValueError("Une recherche est en cours : relancez le diagnostic quand elle sera finie.")
+                body = json.loads(self._body() or b"{}")
+                res = automation.run_diagnostic(body.get("source", "avoventes"), pipeline.criteria_deps(config.load()["criteres"]))
+                return self._json({k: v for k, v in res.items() if k != "zip"})
             if p == "/api/import":
                 lid = pipeline.manual_import(json.loads(self._body() or b"{}"))
                 return self._json(detail(lid))
@@ -238,26 +279,26 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+SCHED_PERIOD = 300
+
+
 def scheduler():
     """Actualisation périodique optionnelle (Paramètres > actualisation automatique)."""
+    time.sleep(20)  # au démarrage : si la recherche du matin n'a pas été faite (Mac éteint), elle part tout de suite
     while True:
-        time.sleep(300)
         try:
-            h = config.load().get("actualisation_auto_heures") or 0
-            if not h:
-                continue
-            last = db.q("SELECT max(started_at) s FROM runs")[0]["s"]
-            from datetime import datetime
-            if not last or (datetime.now().astimezone() - datetime.fromisoformat(last)).total_seconds() > h * 3600:
-                pipeline.run_search()
+            if not pipeline.STATE["running"] and automation.search_due():
+                pipeline.run_search(trigger="automatique")
         except Exception as e:
             print("planificateur :", e)
+        time.sleep(SCHED_PERIOD)
 
 
 def serve(host="127.0.0.1", port=8765):
     if host not in ("127.0.0.1", "localhost", "::1") and not PASSWORD:
         raise SystemExit("Refus de démarrer : écoute réseau publique sans mot de passe. Définissez IMMORADAR_PASSWORD.")
     db.conn()
+    automation.refresh_launch_agent()
     threading.Thread(target=scheduler, daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), H)
     print(f"ImmoRadar prêt : http://{host}:{port}  (Ctrl+C pour arrêter)")

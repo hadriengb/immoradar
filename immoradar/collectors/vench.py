@@ -11,7 +11,7 @@ import urllib.parse
 
 from .. import contacts, extract
 from ..geo_fr import DEPARTEMENTS, dep_from_postcode, dep_from_text
-from ..net import PoliteClient
+from ..net import FetchError, PoliteClient, ProtectionDetected, RobotsDisallowed
 
 NAME = "vench"
 LABEL = "Vench"
@@ -104,8 +104,17 @@ def collect(deps, known, log):
     deps = [d for d in deps if d in DEPARTEMENTS]
     client = PoliteClient(HOME, min_delay=3.0, max_requests=len(deps) * MAX_PAGES_DEP + MAX_DETAILS + 5)
     listed = {}
+    failed = []
     for dep in deps:
-        listed.update(list_department(client, dep, log))
+        try:
+            listed.update(list_department(client, dep, log))
+        except (ProtectionDetected, RobotsDisallowed):
+            raise
+        except FetchError as e:
+            failed.append(dep)
+            log(f"Vench {DEPARTEMENTS[dep]} : liste illisible ({e})")
+    if failed and not listed:
+        raise FetchError(f"aucune liste lisible ({', '.join(failed)})")
     order = sorted(listed, key=lambda s: (s in known, known.get(s) or ""))
     out, errors = [], []
     for sid in order[:MAX_DETAILS]:

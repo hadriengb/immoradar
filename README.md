@@ -25,6 +25,17 @@ Premier clic sur **🔎 LANCER UNE RECHERCHE** : la collecte prend quelques minu
 pages par politesse), puis les fichiers DVF des départements concernés sont téléchargés une fois pour toutes
 (plusieurs dizaines de Mo par département, quelques minutes). Les recherches suivantes sont plus rapides.
 
+## Recherche automatique du matin
+
+Par défaut, une recherche part chaque matin à partir de 7 h (heure réglable dans Paramètres) tant qu'ImmoRadar est
+ouvert ; s'il était fermé, elle part dès l'ouverture. Sur Mac, « Activer aussi quand l'application est fermée »
+(Paramètres) installe une tâche du matin dans votre session (LaunchAgent), sans Terminal. Une seule recherche par jour.
+Les nouvelles annonces s'affichent en tête du tableau de bord jusqu'à « Marquer comme vues ».
+
+Si une source répond mal (coupure, surcharge), ImmoRadar réessaie deux fois en ralentissant, garde ce qu'il a lu,
+puis s'arrête sans insister ; les annonces déjà enregistrées restent affichées. Pour une source « vide » ou en
+erreur, le bouton « Créer un diagnostic » du tableau de bord enregistre les pages reçues dans un zip à transmettre.
+
 ## Ce que fait la recherche
 
 1. Interroge chaque source autorisée (robots.txt relu à chaque fois, arrêt immédiat si CAPTCHA / protection).

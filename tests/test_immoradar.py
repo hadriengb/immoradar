@@ -801,3 +801,94 @@ class T15Protection(unittest.TestCase):
                 c.get(base + "/challenge")
         finally:
             srv.shutdown()
+
+
+class T16Robustesse(unittest.TestCase):
+    def test_retry_after_connection_reset(self):
+        calls = []
+        real = net.raw_get
+
+        def flaky(url, **kw):
+            calls.append(url)
+            if url.endswith("/page") and len([c for c in calls if c.endswith("/page")]) == 1:
+                raise net.FetchError("ConnectionResetError: [Errno 54] Connection reset by peer")
+            return 200, b"<html>" + b"ok " * 3000 + b"</html>", {}
+        old_waits, net.RETRY_WAITS, net.raw_get = net.RETRY_WAITS, (0, 0), flaky
+        try:
+            c = net.PoliteClient("http://exemple.test", min_delay=1.0)
+            self.assertIn("ok", c.get("http://exemple.test/page"))
+            self.assertEqual(c.retries, 1)
+            self.assertGreaterEqual(c.min_delay, 6.0)        # plus lent après une coupure
+        finally:
+            net.RETRY_WAITS, net.raw_get = old_waits, real
+
+    def test_no_retry_on_rate_limit(self):
+        real = net.raw_get
+        net.raw_get = lambda url, **kw: (429, b"Too many requests", {}) if not url.endswith("robots.txt") else (404, b"", {})
+        try:
+            with self.assertRaises(net.ProtectionDetected):
+                net.PoliteClient("http://exemple.test", min_delay=0).get("http://exemple.test/x")
+        finally:
+            net.raw_get = real
+
+    def test_licitor_keeps_partial_results(self):
+        srv, url = start_fake()
+        old_home, old_waits = licitor.HOME, net.RETRY_WAITS
+        licitor.HOME, net.RETRY_WAITS = url, (0, 0)
+        real = net.raw_get
+
+        def cut_detail(u, **kw):
+            if "/annonce/" in u and "999001" not in u:
+                raise net.FetchError("ConnectionResetError: [Errno 54] Connection reset by peer")
+            return real(u, **kw)
+        net.raw_get = cut_detail
+        old_delay = net.PoliteClient.__init__.__defaults__
+        net.PoliteClient.__init__.__defaults__ = (0.0, 80)
+        try:
+            items = licitor.collect(["75", "69"], {}, lambda m: None)
+            self.assertEqual([i["source_id"] for i in items], ["999001"])
+            self.assertIn("Les annonces déjà enregistrées restent affichées", licitor.LAST_WARNING)
+        finally:
+            net.raw_get, licitor.HOME, net.RETRY_WAITS = real, old_home, old_waits
+            net.PoliteClient.__init__.__defaults__ = old_delay
+            srv.shutdown()
+
+
+class T17Automatique(unittest.TestCase):
+    def test_search_due(self):
+        from datetime import datetime
+        from immoradar import automation
+        params = {"recherche_auto": {"active": True, "heure": 7}}
+        tz = datetime.now().astimezone().tzinfo
+        db.x("INSERT INTO runs(started_at,status) VALUES (?,?)", ("2030-01-10T06:30:00+00:00", "terminée"))
+        t = lambda h: datetime(2030, 1, 10, h, 5, tzinfo=tz)  # noqa: E731
+        self.assertFalse(automation.search_due(params, t(6)))                # avant l'heure
+        self.assertTrue(automation.search_due(params, datetime(2030, 1, 10, 9, 0, tzinfo=datetime.fromisoformat("2030-01-10T06:30:00+00:00").tzinfo)))
+        db.x("INSERT INTO runs(started_at,status) VALUES (?,?)", ("2030-01-10T07:10:00+00:00", "terminée"))
+        self.assertFalse(automation.search_due(params, datetime(2030, 1, 10, 9, 0, tzinfo=datetime.fromisoformat("2030-01-10T07:10:00+00:00").tzinfo)))
+        self.assertFalse(automation.search_due({"recherche_auto": {"active": False, "heure": 7}}))
+        db.x("DELETE FROM runs WHERE started_at LIKE '2030-%'")
+
+    def test_diagnostic_zip(self):
+        import zipfile
+        from immoradar import automation
+        from immoradar.collectors import vench
+        srv, url = start_fake()
+        old = vench.HOME
+        vench.HOME = url
+        old_delay = net.PoliteClient.__init__.__defaults__
+        net.PoliteClient.__init__.__defaults__ = (0.0, 80)
+        try:
+            res = automation.run_diagnostic("vench", ["91"], log=lambda m: None)
+        finally:
+            vench.HOME = old
+            net.PoliteClient.__init__.__defaults__ = old_delay
+            srv.shutdown()
+        self.assertEqual(res["items"], 2)
+        self.assertGreaterEqual(res["pages"], 3)
+        names = zipfile.ZipFile(res["zip"]).namelist()
+        self.assertIn("journal.txt", names)
+        self.assertTrue(any("vente-167303" in n for n in names))
+        self.assertEqual(automation.diagnostic_file(res["name"]), res["zip"])
+        self.assertIsNone(automation.diagnostic_file("../immoradar.db"))
+        self.assertEqual(vench.MAX_DETAILS, 60)                          # limite remise après le diagnostic

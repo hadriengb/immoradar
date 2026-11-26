@@ -73,6 +73,15 @@ def _save_diag(url, status, text):
         fh.write(f"<!-- {url} HTTP {status} -->\n" + text)
 
 
+RETRY_WAITS = (20, 60)  # secondes : nouvel essai après une coupure réseau, de plus en plus espacé
+_TRANSIENT = ("ConnectionReset", "Connection reset", "RemoteDisconnected", "timed out", "Timeout", "BrokenPipe",
+              "IncompleteRead", "Connection aborted", "EOF occurred")
+
+
+def is_transient(err):
+    return any(t.lower() in str(err).lower() for t in _TRANSIENT)
+
+
 class PoliteClient:
     """Client par source : lit robots.txt une fois, applique un délai minimal entre requêtes."""
 
@@ -84,12 +93,13 @@ class PoliteClient:
         self._last = 0.0
         self._robots = None
         self.robots_status = "non vérifié"
+        self.retries = 0
 
     def _load_robots(self):
         if self._robots is not None:
             return
         rp = urllib.robotparser.RobotFileParser()
-        status, body, headers = raw_get(self.base_url + "/robots.txt", accept="text/plain,*/*")
+        status, body, headers = self._fetch(self.base_url + "/robots.txt", accept="text/plain,*/*")
         ctype = (headers.get("Content-Type") or "") if headers else ""
         if status == 200 and "html" not in ctype.lower():
             rp.parse(body.decode("utf-8", "replace").splitlines())
@@ -107,6 +117,28 @@ class PoliteClient:
             self.robots_status = f"pas de robots.txt exploitable (HTTP {status})"
         self._robots = rp
 
+    def _fetch(self, url, accept=None):
+        """Une requête, avec au plus deux nouveaux essais espacés si le site coupe la connexion ou répond
+        « indisponible » (502/503/504). Après une coupure, le délai entre requêtes est doublé (politesse).
+        Aucun contournement : 401/403/429 et les CAPTCHA arrêtent la collecte."""
+        kw = {"accept": accept} if accept else {}
+        for attempt in range(len(RETRY_WAITS) + 1):
+            try:
+                status, body, headers = raw_get(url, **kw)
+            except FetchError as e:
+                if not is_transient(e) or attempt == len(RETRY_WAITS):
+                    raise
+                self.retries += 1
+                self.min_delay = min(max(self.min_delay * 2, 6.0 if self.min_delay else 0.0), 20.0)
+                time.sleep(RETRY_WAITS[attempt])
+                continue
+            if status in (502, 503, 504) and attempt < len(RETRY_WAITS):
+                ra = (headers.get("Retry-After") or "") if headers else ""
+                self.retries += 1
+                time.sleep(min(int(ra), 120) if ra.isdigit() else RETRY_WAITS[attempt])
+                continue
+            return status, body, headers
+
     def get(self, url):
         if not url.startswith("http"):
             url = urllib.parse.urljoin(self.base_url + "/", url)
@@ -120,7 +152,7 @@ class PoliteClient:
             time.sleep(wait)
         self._last = time.time()
         self.requests_done += 1
-        status, body, headers = raw_get(url)
+        status, body, headers = self._fetch(url)
         text = body.decode("utf-8", "replace")
         low = text[:30000].lower()
         if DIAG_DIR:
