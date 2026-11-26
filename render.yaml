@@ -1,0 +1,16 @@
+# Render Blueprint (offre gratuite) : sur render.com, New > Blueprint > choisir ce dépôt GitHub.
+# Render demandera IMMORADAR_PASSWORD (mot de passe d'accès) et DATABASE_URL (base Postgres gratuite Neon).
+services:
+  - type: web
+    name: immoradar
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    envVars:
+      - key: IMMORADAR_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: IMMORADAR_USER
+        value: immoradar
