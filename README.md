@@ -5,12 +5,15 @@ de marché à partir des ventes réelles DVF, simulations achat-revente et locat
 
 ## Lancer
 
-Prérequis : **Python 3.9 ou plus récent**. Aucune dépendance à installer (bibliothèque standard uniquement).
+**Mac** : double-cliquez sur `Lancer ImmoRadar.command` (la première fois : clic droit > Ouvrir > Ouvrir).
+Le navigateur s'ouvre tout seul. Gardez la fenêtre du Terminal ouverte ; fermez-la pour arrêter.
 
-```bash
-cd immoradar
-python3 run.py            # puis ouvrir http://127.0.0.1:8765
-```
+Autre système : `python3 run.py` dans le dossier (Python 3.9+, aucune dépendance), puis http://127.0.0.1:8765.
+
+Vos données sont dans `~/ImmoRadar-donnees` : elles sont conservées quand vous installez une nouvelle version,
+et celles d'une version précédente (dossier `data/` d'un ancien zip dans Téléchargements) sont reprises automatiquement.
+Si le port 8765 est déjà pris (ancienne version encore ouverte), un autre port est choisi et affiché.
+Tester la lecture d'un PDF : `python3 run.py --test-pdf chemin/vers/document.pdf`.
 
 Sous Windows : `py run.py`. Les données sont stockées dans `data/immoradar.db` (SQLite).
 Options : `--port 8800`, `--search` (lance une recherche sans interface puis quitte : utile dans un cron).
@@ -60,9 +63,10 @@ par le passé, résidence sociale, bien décrit comme « chambre », hypothèque
 Les prix ou comparables cités dans le document sont affichés mais ne remplacent jamais l'estimation DVF.
 Les écarts entre l'annonce et le document (surface, mise à prix, occupation) sont signalés.
 
-Lecture des PDF : `pdftotext` (poppler) est nécessaire ; pour les PDF scannés, `tesseract` avec le français.
-macOS : `brew install poppler tesseract tesseract-lang`. Debian/Ubuntu : `apt install poppler-utils tesseract-ocr tesseract-ocr-fra`.
-L'image Docker (Render) les inclut. Sans OCR, un PDF scanné est signalé « illisible » : collez alors son texte.
+Lecture des PDF :
+- **macOS : rien à installer.** ImmoRadar utilise PDFKit (texte) et Vision (OCR des scans, français) intégrés au système.
+- Linux / Docker (Render) : `pdftotext` (poppler) et `tesseract` + français, inclus dans l'image Docker.
+- Sinon, un PDF non lisible est signalé : collez son texte sur la fiche.
 
 ## Tests
 

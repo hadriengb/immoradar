@@ -15,7 +15,8 @@ import threading
 import urllib.parse
 from datetime import datetime, timezone
 
-DATA_DIR = os.environ.get("IMMORADAR_DATA", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
+# Données hors du dossier de l'application : elles survivent aux mises à jour (nouveau zip).
+DATA_DIR = os.environ.get("IMMORADAR_DATA") or os.path.join(os.path.expanduser("~"), "ImmoRadar-donnees")
 DB_PATH = os.path.join(DATA_DIR, "immoradar.db")
 REF_PATH = os.path.join(DATA_DIR, "reference.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")

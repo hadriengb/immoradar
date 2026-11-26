@@ -45,6 +45,7 @@ function cardHtml(c, opts = {}) {
       <div class="meta">Mise à prix <b>${eur(c.mise_a_prix)}</b>${c.adjudication_price ? " · adjugé " + eur(c.adjudication_price) : ""} · vente ${c.sale_date ? esc(dfr(c.sale_date)) + (c.sale_time ? " " + esc(c.sale_time) : "") : '<span class="unk">date inconnue</span>'}${c.sale_place ? " · " + esc(c.sale_place) : ""}</div>
       <div class="meta">${est}${c.decote_pct != null ? " · décote apparente " + pct(c.decote_pct) : ""}</div>
       <div class="meta">Source : ${srcs || "—"} · ${esc(c.sale_kind || "type de vente inconnu")}</div>
+      ${c.verdict ? `<div class="meta verdict-line"><b>Avis :</b> ${esc(c.verdict)}</div>` : ""}
       ${c.doc_count ? `<div class="meta">📄 ${c.doc_count} document(s) analysé(s)${c.doc_conflicts.length ? ` · <span style="color:var(--warn)">${c.doc_conflicts.length} écart(s) avec l'annonce</span>` : ""}</div>` : ""}
       ${risks ? `<div class="row" style="margin-top:4px">${risks}</div>` : ""}
     </div>
@@ -92,7 +93,7 @@ async function viewDash() {
   <h2>État des sources</h2>
   <div class="panel"><table><thead><tr><th>Source</th><th>État</th><th>Détail</th></tr></thead><tbody>${srcRows}</tbody></table></div>
   <h2>Données d'estimation</h2>
-  <div class="panel small">Stockage de vos annonces : ${esc(s.storage)}<br>DVF (ventes réelles) : ${dvf}${s.dvf.derniere_vente ? ` · vente la plus récente : ${esc(dfr(s.dvf.derniere_vente))}` : ""}<br>
+  <div class="panel small">Stockage de vos annonces : ${esc(s.storage)}<br>Lecture des documents : ${esc(s.doc_reader)}<br>DVF (ventes réelles) : ${dvf}${s.dvf.derniere_vente ? ` · vente la plus récente : ${esc(dfr(s.dvf.derniere_vente))}` : ""}<br>
   Carte des loyers 2025 : ${s.loyers.length ? s.loyers.map(l => esc(l.kind) + " " + l.n + " communes").join(", ") : "non chargée"}
   ${lr && lr.summary && lr.summary.loyers ? `<div class="muted">${Object.entries(lr.summary.loyers).map(([k, v]) => esc(k) + " : " + esc(v)).join(" · ")}</div>` : ""}</div>
   <h2>Meilleures opportunités</h2>
@@ -207,6 +208,18 @@ function scoreDetail(s, label) {
   return `<h3>${label} : ${s.score}/100</h3><table><tbody>${s.parts.map(p => `<tr><td>${esc(p.label)}</td><td class="num">+${p.pts}</td></tr>`).join("")}${s.penalties.map(p => `<tr><td>${esc(p.label)}</td><td class="num" style="color:var(--bad)">${p.pts}</td></tr>`).join("")}</tbody></table>${s.cap ? `<div class="err">${esc(s.cap)}</div>` : ""}`;
 }
 
+const NATURE_CLS = { "confirmé": "n-conf", "annonce": "n-don", "estimé": "n-est", "saisi": "n-saisi" };
+function avisHtml(a) {
+  if (!a) return "";
+  if (!a.verdict) return a.error ? `<div class="warn">${esc(a.error)}</div>` : "";
+  const sec = (k, title) => (a.sections[k] || []).length ? `<h4>${title}</h4><ul class="avis">${a.sections[k].map(p =>
+    `<li><span class="nat ${NATURE_CLS[p.nature] || ""}">${esc(p.nature)}</span> ${esc(p.text)}${p.ref ? ` <span class="prov">(${esc(p.ref)})</span>` : ""}</li>`).join("")}</ul>` : "";
+  return `<div class="panel avis-panel"><h3>Avis ImmoRadar</h3><p class="verdict">${esc(a.verdict)}</p>
+    ${sec("nature", "Ce qu'est vraiment le bien")}${sec("valeur", "Valeur réaliste")}${sec("positifs", "Points positifs")}${sec("vigilance", "Points de vigilance")}
+    <h4>Prix plafond indicatif</h4><p>${esc(a.plafond_txt)}</p>
+    <p class="small muted">${esc(a.note)} « confirmé » = lu dans un document (page citée) · « annonce » = lu dans l'annonce · « estimé » = calcul.</p></div>`;
+}
+
 async function openDetail(id, onChange) {
   const d = await api("/api/listing/" + id);
   const it = d.item, an = d.analysis || {}, est = an.estimation || {}, sim = an.simulation || {}, sc = an.scores || {};
@@ -239,6 +252,7 @@ async function openDetail(id, onChange) {
     <div class="row space"><h1 style="margin:0">${esc(TYPES[it.type] || "Bien")} ${it.rooms ? it.rooms + " pièces" : ""} — ${esc(it.city || "ville inconnue")}</h1>
       <div class="row"><span class="badge ${STATUS_CLS[d.status] ?? "b-mute"}">${esc(d.status)}</span><button id="d-fav">${d.favorite ? "★ Favori" : "☆ Ajouter aux favoris"}</button><button id="d-hide">${d.hidden ? "Ré-afficher" : "Masquer"}</button></div></div>
     <p class="small legend muted"><span class="n-don">● donnée lue dans l'annonce (source indiquée)</span><span class="n-est">estimé</span><span class="n-hyp">hypothèse modifiable</span><span>✎ saisi par vous</span><span class="unk">inconnu</span></p>
+    ${avisHtml(an.avis)}
     ${(it.photos || []).length ? `<div class="photos">${it.photos.map(p => `<img src="${esc(p)}" alt="" loading="lazy" onerror="this.remove()">`).join("")}</div>` : '<p class="muted small">Pas de photo disponible.</p>'}
     <div class="grid g2" style="margin-top:12px">
       <div class="panel"><h3>Le bien</h3><div class="kv">
@@ -254,7 +268,7 @@ async function openDetail(id, onChange) {
         ${f("Sources", (it.sources || []).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.source)}</a> <span class="muted small">collecté ${dtfr(s.collected_at)}</span>`).join("<br>"))}
       </div></div>
     </div>
-    <div class="panel" style="margin-top:12px"><h3>Documents</h3>${docs}${docAnalysisHtml(it, d.doc_tools)}</div>
+    <div class="panel" style="margin-top:12px"><h3>Documents</h3>${docs}${docAnalysisHtml(it, d.doc_tools, d.doc_reader)}</div>
     ${(it.doc_conflicts || []).map(c => `<div class="warn"><b>Écart annonce / document :</b> ${esc(c)}</div>`).join("")}
     ${(it.risks || []).length ? `<div class="panel" style="margin-top:12px"><h3>Risques et points d'attention</h3>${it.risks.map(r => `<span class="badge ${r.severity >= 3 ? "b-bad" : r.severity === 2 ? "b-warn" : "b-mute"}" title="${esc(r.quote || "")}">${esc(r.label)}${r.scope === "locatif" ? " (locatif)" : ""}${r.source ? " · " + esc(r.source) + (r.page ? " p." + r.page : "") : ""}</span>`).join(" ")}<p class="small muted">Annonce : détection par mots-clés. Documents : citation et page visibles dans « Ce que disent les documents ».</p></div>` : ""}
     <h2>Estimation de la valeur de marché</h2><div class="panel">${estHtml}</div>
@@ -301,14 +315,14 @@ $("#modal-close").onclick = () => $("#modal").classList.add("hidden");
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); });
 
 const FACT_FMT = v => typeof v === "number" ? (v >= 1000 ? eur(v) : num(v)) : esc(v ?? "—");
-function docAnalysisHtml(it, tools) {
+function docAnalysisHtml(it, tools, reader) {
   const das = it.doc_analyses || [];
   const rows = das.map(d => `<tr><td><b>${esc(d.kind || d.label)}</b><div class="small muted">${esc(d.label)} · ${esc(d.method || "")} · ${dtfr(d.analysed_at)}</div></td>
     <td><span class="badge ${d.status === "analysé" ? "b-ok" : "b-warn"}">${esc(d.status)}</span>${d.message ? `<div class="small">${esc(d.message)}</div>` : ""}</td>
     <td class="right"><button class="small" data-docrm="${esc(d.origin)}">retirer</button></td></tr>`).join("");
   const facts = das.filter(d => d.status === "analysé").flatMap(d => (d.facts || []).map(f => ({...f, doc: d.kind || d.label})));
   const risks = das.filter(d => d.status === "analysé").flatMap(d => (d.risks || []).map(r => ({...r, doc: d.kind || d.label})));
-  const ocr = tools && !tools.tesseract ? `<span class="small muted">OCR non installé : un PDF scanné ne pourra pas être lu automatiquement (collez alors son texte).</span>` : "";
+  const ocr = `<span class="small muted">Lecteur : ${esc(reader || "")}</span>`;
   return `<h3 style="margin-top:16px">Ce que disent les documents</h3>
     ${das.length ? `<table><tbody>${rows}</tbody></table>` : '<p class="small muted">Aucun document analysé pour l\'instant.</p>'}
     ${facts.length || risks.length ? `<div style="overflow:auto"><table><thead><tr><th>Information</th><th>Valeur</th><th>Document</th><th>Citation</th><th>Utilisée</th></tr></thead><tbody>

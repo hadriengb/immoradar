@@ -80,3 +80,10 @@ input,select,textarea{min-width:0}
   .est3 b{font-size:16px}
   table{display:block;overflow-x:auto}
 }
+.avis-panel{margin-top:12px;border-left:4px solid var(--accent)}
+.avis-panel .verdict{font-weight:600;font-size:1.05em;margin:4px 0 8px}
+.avis-panel h4{margin:10px 0 4px}
+ul.avis{margin:0;padding-left:18px}ul.avis li{margin:3px 0}
+.nat{display:inline-block;font-size:.75em;padding:0 6px;border-radius:8px;border:1px solid currentColor;margin-right:4px}
+.n-conf{color:var(--ok);font-weight:600}.n-saisi{color:var(--muted,#888)}
+.verdict-line{font-style:italic}

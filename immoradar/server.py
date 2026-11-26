@@ -39,6 +39,7 @@ def dashboard():
         "seuil": seuil,
         "dvf": opendata.dvf_status(),
         "storage": db.backend(),
+        "doc_reader": documents.reader_label(),
         "loyers": [dict(r) for r in db.q("SELECT kind, count(*) n FROM loyers GROUP BY kind")],
         "sources_def": [{"name": n, "label": m.LABEL, "mode": m.MODE, "legal": m.LEGAL, "home": m.HOME}
                         for n, m in COLLECTORS.items()],
@@ -54,7 +55,7 @@ def detail(lid):
     c = pipeline.card(row, pipeline.last_run_id())
     srcs = [dict(r) for r in db.q("SELECT source, source_id, url, collected_at FROM listing_sources WHERE listing_id=?", (lid,))]
     return {**c, "item": item, "overrides": ov, "analysis": json.loads(row["analysis"] or "{}"), "raw_sources": srcs,
-            "params": config.load()["calculs"], "doc_tools": documents.tools()}
+            "params": config.load()["calculs"], "doc_tools": documents.tools(), "doc_reader": documents.reader_label()}
 
 
 class H(BaseHTTPRequestHandler):

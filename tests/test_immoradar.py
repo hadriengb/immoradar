@@ -488,3 +488,52 @@ class T09Documents(unittest.TestCase):
         s = scoring.score(item, est, sim)
         self.assertIsNone(s["revente"]["cap"])
         self.assertLessEqual(s["locatif"]["score"], 40)
+
+
+class T10MacReader(unittest.TestCase):
+    def test_parse_mac_output(self):
+        from immoradar import documents
+        out = ("<<<PAGE 1 texte>>>\nLigne A\nLigne B\n<<<PAGE 2 ocr>>>\n"
+               "1200\t5000\tsuite de la ligne\n9000\t1000\tTitre en haut\n1210\t1000\tdébut de la ligne\n<<<ERREUR OCR x>>>")
+        pages, n = documents.parse_mac_output(out)
+        self.assertEqual(n, 1)
+        self.assertEqual(pages[0], "Ligne A\nLigne B")
+        self.assertEqual(pages[1].split("\n"), ["Titre en haut", "début de la ligne", "suite de la ligne"])
+
+
+class T11Avis(unittest.TestCase):
+    def _item(self):
+        from immoradar import documents
+        rec = documents.analyse_bytes("\f".join(PV_PAGES).encode(), "PV descriptif", "collé")
+        item = {"type": "appartement", "surface": 16.18, "rooms": 1, "city": "Paris 13e", "mise_a_prix": 10000, "sale_kind": "judiciaire",
+                "occupation": None, "risks": [], "doc_analyses": [rec], "prov": {}}
+        item["doc_conflicts"] = documents.apply_to_item(item)
+        return item
+
+    def test_avis_pv(self):
+        from immoradar import avis
+        item = self._item()
+        params = config.load()
+        est = {"status": "ok", "valeur": {"bas": 130000, "central": 150000, "haut": 170000}, "n_comparables": 12,
+               "level": "à moins de 300 m", "confidence_label": "moyenne"}
+        sim = finance.simulate(item, est, None, params["calculs"])
+        sc = scoring.score(item, est, sim)
+        a = avis.build(item, est, sim, sc, params)
+        txt = json.dumps(a, ensure_ascii=False)
+        print("\n" + a["verdict"])
+        self.assertEqual(a["valeur_prudente"], 51520)                     # 6 440 €/m² × 8 m² < comparable 65 000 €
+        self.assertTrue(any(p["nature"] == "confirmé" and p["ref"] and "p." in p["ref"] for p in a["sections"]["nature"]))
+        self.assertIn("résidence sociale", txt.lower())
+        self.assertIn("Vente en un seul lot.", [p["text"] for p in a["sections"]["positifs"]])
+        self.assertIn("Aucune hypothèque inscrite.", [p["text"] for p in a["sections"]["positifs"]])
+        self.assertTrue(a["verdict"].startswith(("À éviter", "Bien piège")))
+        self.assertTrue(a["plafond"] is None or a["plafond"] < 51520)
+
+    def test_avis_without_docs(self):
+        from immoradar import avis
+        params = config.load()
+        item = {"type": "appartement", "surface": 40, "city": "Lyon", "mise_a_prix": 50000, "risks": [], "prov": {}}
+        a = avis.build(item, {"status": "insuffisant"}, {}, {}, params)
+        self.assertEqual(a["plafond_txt"], "Prix plafond non calculable : valeur ou surface inconnue.")
+        self.assertTrue(any("Aucun document" in p["text"] for p in a["sections"]["vigilance"]))
+        self.assertTrue(any("Aucune valeur fiable" in p["text"] for p in a["sections"]["valeur"]))

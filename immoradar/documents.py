@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.parse
 
@@ -21,9 +22,65 @@ MAX_PAGES_OCR = 40
 
 # ------------------------------------------------------------------ lecture du PDF
 
+MAC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macos_pdf.applescript")
+
+
 def tools():
-    return {"pdftotext": bool(shutil.which("pdftotext")), "pdftoppm": bool(shutil.which("pdftoppm")),
+    return {"macos": sys.platform == "darwin" and bool(shutil.which("osascript")),
+            "pdftotext": bool(shutil.which("pdftotext")), "pdftoppm": bool(shutil.which("pdftoppm")),
             "tesseract": bool(shutil.which("tesseract"))}
+
+
+def reader_label():
+    t = tools()
+    if t["macos"]:
+        return "macOS intégré (PDFKit + OCR Vision) : texte et scans lisibles"
+    if t["pdftotext"] and t["tesseract"]:
+        return "poppler + tesseract : texte et scans lisibles"
+    if t["pdftotext"]:
+        return "poppler : PDF numériques lisibles, scans non lisibles (OCR absent)"
+    return "aucun lecteur PDF : collez le texte des documents"
+
+
+def parse_mac_output(out):
+    """Découpe la sortie du script macOS en pages ; remet les lignes OCR dans l'ordre de lecture."""
+    pages, cur, mode = [], None, None
+    for line in out.splitlines():
+        m = re.match(r"<<<PAGE (\d+) (texte|ocr)>>>", line)
+        if m:
+            if cur is not None:
+                pages.append((mode, cur))
+            cur, mode = [], m.group(2)
+            continue
+        if line.startswith("<<<ERREUR"):
+            continue
+        if cur is not None:
+            cur.append(line)
+    if cur is not None:
+        pages.append((mode, cur))
+    texts, n_ocr = [], 0
+    for mode, lines in pages:
+        if mode == "ocr":
+            n_ocr += 1
+            rows = []
+            for l in lines:
+                parts = l.split("\t", 2)
+                if len(parts) == 3 and parts[0].lstrip("-").isdigit() and parts[1].lstrip("-").isdigit():
+                    rows.append((-int(parts[0]), int(parts[1]), parts[2]))
+                else:
+                    rows.append((0, 0, l))
+            rows.sort(key=lambda r: (round(r[0] / 60), r[1]))  # même ligne visuelle : gauche -> droite
+            texts.append("\n".join(r[2] for r in rows))
+        else:
+            texts.append("\n".join(lines))
+    return texts, n_ocr
+
+
+def mac_pdf_pages(path):
+    r = subprocess.run(["osascript", MAC_SCRIPT, path], capture_output=True, timeout=900)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace")[:300])
+    return parse_mac_output(r.stdout.decode("utf-8", "replace"))
 
 
 def pdf_pages(data):
@@ -34,8 +91,22 @@ def pdf_pages(data):
             return data.decode("utf-8").split("\f"), "texte", None
         except UnicodeDecodeError:
             return [], None, "Fichier non reconnu (ni PDF ni texte)."
+    mac_error = None
+    if t["macos"]:
+        with tempfile.TemporaryDirectory() as d:
+            pdf = os.path.join(d, "doc.pdf")
+            with open(pdf, "wb") as fh:
+                fh.write(data)
+            try:
+                pages, n_ocr = mac_pdf_pages(pdf)
+                if sum(len(p.strip()) for p in pages) > 50:
+                    return pages, "macOS " + (f"(OCR Vision sur {n_ocr} page(s))" if n_ocr else "(texte du PDF)"), None
+                mac_error = "aucun texte reconnu"
+            except Exception as e:
+                mac_error = str(e)
     if not t["pdftotext"]:
-        return [], None, "pdftotext n'est pas installé : impossible de lire le PDF (voir README, « Documents »)."
+        return [], None, (f"Lecture macOS impossible ({mac_error}). " if mac_error else "") + \
+            "Aucun lecteur PDF disponible : collez le texte du document sur la fiche."
     with tempfile.TemporaryDirectory() as d:
         pdf = os.path.join(d, "doc.pdf")
         with open(pdf, "wb") as fh:
@@ -297,7 +368,7 @@ def apply_to_item(item):
             fld = f["field"]
             where = f"{src} p.{f['page']}" if f.get("page") else src
             if fld == "surface_document" and item.get("surface") and f["value"] and abs(f["value"] - item["surface"]) / item["surface"] > 0.2:
-                conflicts.append(f"Surface : annonce {item['surface']:g} m², {where} indique « {f['quote']} ».")
+                conflicts.append(f"Surface : annonce {item['surface']:g} m², {where} indique environ {f['value']:g} m².")
             if fld == "mise_a_prix_document" and item.get("mise_a_prix") and f["value"] and abs(f["value"] - item["mise_a_prix"]) > 1:
                 conflicts.append(f"Mise à prix : annonce {item['mise_a_prix']:,.0f} €, {where} : {f['value']:,.0f} €.".replace(",", " "))
             if not f.get("apply") or fld not in APPLY_FIELDS or fld in ov_fields:

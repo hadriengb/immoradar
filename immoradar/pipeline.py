@@ -5,7 +5,7 @@ import threading
 import traceback
 from datetime import date
 
-from . import config, db, documents, estimate, finance, opendata, scoring
+from . import avis, config, db, documents, estimate, finance, opendata, scoring
 from .collectors import ALL as COLLECTORS
 from .geo_fr import ZONES, dep_from_postcode, slugify
 from .net import FetchError, ProtectionDetected, RobotsDisallowed
@@ -167,6 +167,10 @@ def analyse(lid, params=None):
     sim = finance.simulate(item, est, rent, params["calculs"])
     sc = scoring.score(item, est, sim)
     an = {"estimation": est, "loyer": rent, "simulation": sim, "scores": sc, "computed_at": db.now_iso()}
+    try:
+        an["avis"] = avis.build(item, est, sim, sc, params)
+    except Exception as e:  # l'avis ne doit jamais bloquer l'analyse
+        an["avis"] = {"verdict": None, "error": f"Avis non généré : {e}"}
     db.x("UPDATE listings SET analysis=? WHERE id=?", (json.dumps(an, ensure_ascii=False), lid))
     return an
 
@@ -374,6 +378,7 @@ def card(row, last_run):
         "sale_date": item.get("sale_date"), "sale_time": item.get("sale_time"), "sale_place": item.get("sale_place"),
         "doc_count": len([d for d in item.get("doc_analyses") or [] if d.get("status") == "analysé"]),
         "doc_conflicts": item.get("doc_conflicts") or [],
+        "verdict": (an.get("avis") or {}).get("verdict"),
         "sale_kind": item.get("sale_kind"), "occupation": item.get("occupation"), "photo": (item.get("photos") or [None])[0],
         "sources": item.get("sources"), "first_seen": row["first_seen"], "collected_at": item.get("collected_at"),
         "risks": [r for r in item.get("risks") or [] if r.get("severity", 1) > 0], "works_level": item.get("works_level"), "features": item.get("features") or {},
