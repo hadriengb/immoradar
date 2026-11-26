@@ -54,11 +54,27 @@ erreur, le bouton « Créer un diagnostic » du tableau de bord enregistre les p
 | Avoventes | automatique (expérimental) | robots.txt autorise tout ; structure HTML non vérifiée : `python3 run.py --diagnostic` enregistre les pages reçues pour écrire un vrai lecteur |
 | Immobilier des notaires | import manuel | CGU art. 5 : reproduction des annonces interdite |
 | Info-Enchères | import manuel | CGU : usage strictement personnel, copie et reproduction interdites |
+| Alertes email (SeLoger, Leboncoin, Jinka, Bien'ici, PAP…) | automatique, à configurer | lecture de VOS emails d'alerte (IMAP en lecture seule ou fichiers .eml) : aucun portail n'est interrogé, les liens de suivi ne sont pas ouverts |
+| Stream Estate (ex-Melo) | automatique, à configurer | API officielle d'un agrégateur sous licence, avec votre clé ; payant (0,01 € par annonce reçue ou forfait dès 99 €/mois) ; plafond d'annonces par recherche réglable |
 | Annonces classiques (SeLoger, Leboncoin, PAP, Bien'ici) | import manuel | Leboncoin interdit expressément les robots ; robots.txt de PAP et Bien'ici fermés aux annonces ; SeLoger refuse les robots. Import d'une annonce ouverte soi-même (lien + texte), analysée comme vente classique |
 | Enchères du Domaine | import manuel | application 100 % JavaScript avec cookies obligatoires, pas d'API publique |
 
 Import manuel : collez le lien de l'annonce. Pour Licitor, Vench et Avoventes le lien suffit ; pour les autres,
 collez aussi le texte de la page (Cmd+A, Cmd+C).
+
+## Annonces classiques (SeLoger, Leboncoin, PAP, Bien'ici…) : deux voies autorisées
+
+Ces portails interdisent les robots ; ImmoRadar ne les lit jamais directement. Dans Paramètres :
+
+1. **Alertes email (gratuit).** Créez une alerte sur Jinka (qui regroupe la plupart des portails) ou sur chaque
+   site, pour Paris et Lyon. Renseignez l'adresse, un mot de passe d'application (Gmail : Compte Google › Sécurité ›
+   Mots de passe des applications) et le serveur IMAP, puis « Enregistrer et tester ». La boîte est ouverte en
+   lecture seule, rien n'est marqué lu. Sans IMAP, déposez des fichiers .eml.
+2. **API Stream Estate (payant).** Collez votre clé API, les codes INSEE des communes et un plafond d'annonces
+   par recherche (coût ≈ 0,01 € par annonce). Le connecteur suit la documentation publique v2 ; certains champs
+   de la réponse n'y sont pas détaillés et restent « inconnu » s'ils ne sont pas trouvés.
+
+Ces annonces sont traitées comme des ventes classiques : prix affiché, frais de notaire, pas de surenchère.
 
 ## Fiabilité
 

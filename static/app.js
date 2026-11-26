@@ -10,7 +10,7 @@ const dfr = s => s ? new Date(s.length <= 10 ? s + "T12:00:00" : s).toLocaleDate
 const dtfr = s => s ? new Date(s).toLocaleString("fr-FR", {day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"}) : "jamais";
 const TYPES = {appartement: "Appartement", maison: "Maison", studio: "Studio", immeuble: "Immeuble", local_commercial: "Local commercial", parking: "Parking", terrain: "Terrain"};
 const STATUS_CLS = {"nouvelle": "b-ok", "à venir": "", "adjugée": "b-mute", "retirée": "b-bad"};
-const SRC_CLS = {ok: "b-ok", partiel: "b-warn", vide: "b-warn", erreur: "b-bad", "bloquée": "b-bad", manuel: "b-mute", "désactivée": "b-mute"};
+const SRC_CLS = {ok: "b-ok", partiel: "b-warn", "à configurer": "b-mute", vide: "b-warn", erreur: "b-bad", "bloquée": "b-bad", manuel: "b-mute", "désactivée": "b-mute"};
 
 async function api(path, opts = {}) {
   const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
@@ -82,6 +82,7 @@ async function viewDash() {
     <td><span class="badge ${SRC_CLS[x.status] || "b-mute"}">${esc(x.status)}</span></td>
     <td class="small">${esc(x.message)}${x.at ? `<div class="muted">${dtfr(x.at)}</div>` : ""}
     ${x.mode === "auto" && ["vide", "erreur", "partiel"].includes(x.status) ? `<div style="margin-top:4px"><button class="small" data-diag="${esc(x.name)}">📦 Créer un diagnostic à m'envoyer</button> <span class="small" id="diag-${esc(x.name)}"></span></div>` : ""}
+    ${x.status === "à configurer" ? `<div><a href="#/parametres">→ configurer dans Paramètres</a></div>` : ""}
     ${x.mode === "manuel" && x.links ? `<details><summary>Ouvrir la source et importer à la main</summary>${x.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join("<br>")}<br><a href="#/parametres" >→ formulaire d'import manuel</a></details>` : ""}</td></tr>`).join("");
   const dvf = s.dvf.departements.length ? s.dvf.departements.map(d => `${esc(d.dep)} (${esc(d.years)} · ${d.n.toLocaleString("fr-FR")} ventes)`).join(", ") : "aucune donnée chargée";
   app.innerHTML = `
@@ -450,6 +451,56 @@ const CALC_LABELS = {
 const EST_LABELS = {annees: "Ancienneté max des ventes DVF (années)", tolerance_surface: "Tolérance de surface (0,4 = ±40 %)", min_comparables: "Nombre minimal de comparables",
   ajust_rdc_pct: "Ajustement rez-de-chaussée (%)", ajust_etage_sans_asc_pct: "Ajustement étage ≥ 4 sans ascenseur (%)", ajust_exterieur_pct: "Ajustement espace extérieur (%)"};
 
+async function renderConnecteurs() {
+  const c = await api("/api/connecteurs"), a = c.alertes_email, s = c.streamestate;
+  const v = (x) => esc(x ?? "");
+  $("#conn").innerHTML = `
+  <p class="small">Ces sites interdisent les robots : ImmoRadar ne les lit pas directement. Deux voies autorisées, à choisir ou combiner :</p>
+  <h3>1. Vos alertes email (gratuit)</h3>
+  <p class="small">Créez une alerte sur <a href="https://www.jinka.fr/" target="_blank" rel="noopener">Jinka</a> (gratuit, regroupe Leboncoin, SeLoger, PAP, Bien'ici, Logic-Immo…) ou directement sur chaque site, avec vos critères Paris / Lyon.
+  ImmoRadar lit ensuite ces emails dans votre boîte, en lecture seule, à chaque recherche. Il faut un <b>mot de passe d'application</b> : Gmail → Compte Google › Sécurité › Mots de passe des applications ; iCloud → appleid.apple.com › Mots de passe pour app.</p>
+  <div class="grid g3">
+    <div><label>Lecture des alertes</label><select id="ae-active"><option value="1" ${a.active ? "selected" : ""}>activée</option><option value="0" ${!a.active ? "selected" : ""}>désactivée</option></select></div>
+    <div><label>Adresse email</label><input id="ae-utilisateur" value="${v(a.utilisateur)}" placeholder="vous@gmail.com"></div>
+    <div><label>Mot de passe d'application</label><input id="ae-mot_de_passe" type="password" value="${v(a.mot_de_passe)}" placeholder="xxxx xxxx xxxx xxxx"></div>
+    <div><label>Serveur IMAP</label><input id="ae-serveur" value="${v(a.serveur)}" placeholder="imap.gmail.com"></div>
+    <div><label>Dossier</label><input id="ae-dossier" value="${v(a.dossier)}"></div>
+    <div><label>Emails des derniers … jours</label><input id="ae-jours" type="number" value="${v(a.jours)}"></div>
+  </div>
+  <p class="small muted">Serveurs : Gmail imap.gmail.com · iCloud imap.mail.me.com · Outlook/Hotmail outlook.office365.com · Orange imap.orange.fr · Free imap.free.fr · Yahoo imap.mail.yahoo.com. Le mot de passe reste sur cet ordinateur et n'est jamais réaffiché.</p>
+  <div class="row"><button id="ae-save">Enregistrer et tester</button><span class="small" id="ae-msg"></span></div>
+  <p class="small">Sans boîte mail : glissez ici des emails d'alerte enregistrés (.eml, depuis Mail : Fichier › Enregistrer sous) <input type="file" id="ae-eml" accept=".eml,message/rfc822" multiple style="width:auto"> <span id="ae-eml-msg"></span></p>
+  <h3>2. API Stream Estate (payant, le plus complet)</h3>
+  <p class="small">Agrégateur sous licence (ex-Melo) : Leboncoin, SeLoger, PAP, Bien'ici, Figaro Immo… dédoublonnés. 0,01 € par annonce reçue sans abonnement (ex. 200 annonces par jour ≈ 2 €/jour), ou forfait dès 99 €/mois.
+  <a href="https://console.stream.estate/signup" target="_blank" rel="noopener">Créer un compte et une clé API</a>.</p>
+  <div class="grid g3">
+    <div><label>Clé API</label><input id="se-cle_api" type="password" value="${v(s.cle_api)}" placeholder="votre clé"></div>
+    <div><label>Communes (codes INSEE, séparés par des virgules)</label><input id="se-communes_insee" value="${v((s.communes_insee || []).join(", "))}"></div>
+    <div><label>Annonces max par recherche (coût)</label><input id="se-max_annonces" type="number" value="${v(s.max_annonces)}"></div>
+  </div>
+  <p class="small muted">Paris = 75056, Lyon = 69123, Villeurbanne = 69266, Boulogne-Billancourt = 92012, Montreuil = 93048. Le test consomme 5 annonces (≈ 0,05 €).</p>
+  <div class="row"><button id="se-save">Enregistrer et tester</button><span class="small" id="se-msg"></span></div>`;
+  const val = (p, k) => $(`#${p}-${k}`).value;
+  const save = async (name, test, prefix, keys, msgEl) => {
+    const body = {}; body[name] = {}; keys.forEach(k => body[name][k] = val(prefix, k));
+    if (name === "alertes_email") { body[name].active = val("ae", "active") === "1"; body[name].jours = +val("ae", "jours") || 7; }
+    if (name === "streamestate") body[name].max_annonces = +val("se", "max_annonces") || 200;
+    $(msgEl).textContent = "Test en cours…";
+    try { const r = await post("/api/connecteurs", {...body, test}); $(msgEl).innerHTML = r.test ? `<span style="color:var(--ok)">${esc(r.test)}</span>` : `<span style="color:var(--bad)">${esc(r.test_error || "")}</span>`; }
+    catch (e) { $(msgEl).innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+  };
+  $("#ae-save").onclick = () => save("alertes_email", "alertes_email", "ae", ["utilisateur", "mot_de_passe", "serveur", "dossier"], "#ae-msg");
+  $("#se-save").onclick = () => save("streamestate", "streamestate", "se", ["cle_api", "communes_insee"], "#se-msg");
+  $("#ae-eml").onchange = async (e) => {
+    let n = 0; $("#ae-eml-msg").textContent = "Import…";
+    for (const f of e.target.files) {
+      const r = await api("/api/alertes/eml", {method: "POST", body: await f.arrayBuffer(), headers: {"Content-Type": "message/rfc822", "X-Filename": encodeURIComponent(f.name)}});
+      n += r.annonces;
+    }
+    $("#ae-eml-msg").textContent = `${n} annonce(s) importée(s) et analysée(s).`;
+  };
+}
+
 async function viewParams() {
   await loadParams();
   const s = await api("/api/state");
@@ -469,6 +520,7 @@ async function viewParams() {
     <p class="small muted">Une seule recherche par jour (lecture lente et polie des sites). Si ImmoRadar est fermé à cette heure-là, la recherche part dès son ouverture.</p>
     ${s.automation.available ? `<p class="small">${s.automation.installed ? "✅ Lancement automatique du Mac installé : la recherche se fait aussi application fermée (le Mac doit être allumé ou en veille ; elle part au réveil sinon). <button id=\"ra-uninstall\">Désinstaller</button>" : "<button id=\"ra-install\">Activer aussi quand l'application est fermée (Mac)</button> Rien à taper : ImmoRadar installe une tâche du matin dans votre session macOS."}</p><p class="small muted" id="ra-msg"></p>` : ""}
     <p class="small"><button id="imp2">+ Importer une annonce manuellement</button></p></div>
+  <h2>Annonces classiques : SeLoger, Leboncoin, PAP, Bien'ici…</h2><div class="panel" id="conn">Chargement…</div>
   <h2>Mails de demande d'informations</h2><div class="panel"><label>Signature ajoutée en bas des mails préparés (nom, téléphone, email)</label><textarea id="signature" rows="3" placeholder="Prénom Nom\n06 00 00 00 00">${esc(p.signature || "")}</textarea></div>
   <h2>Zones et critères</h2><div class="panel small">Les critères de recherche (zones, départements, villes, types, surfaces, prix, occupation, extérieurs, dates, types de vente) se règlent dans le panneau de filtres de l'onglet <a href="#/annonces">Annonces</a> et sont enregistrés automatiquement. Zones prédéfinies : ${Object.values(DEFS.zones).map(z => esc(z.label) + " (" + z.deps.join(", ") + ")").join(" · ")}.<br>
     <label>Seuil « opportunité intéressante » (note sur 100)</label><input type="number" id="seuil" value="${p.scoring.seuil_opportunite}" style="max-width:120px"></div>
@@ -501,6 +553,7 @@ async function viewParams() {
   if ($("#ra-install")) $("#ra-install").onclick = () => raAct("install");
   if ($("#ra-uninstall")) $("#ra-uninstall").onclick = () => raAct("uninstall");
   $("#imp2").onclick = () => openImport();
+  renderConnecteurs();
   $("#dvf-go").onclick = async () => {
     const ds = [...document.querySelectorAll("[data-dvf]:checked")].map(i => i.dataset.dvf);
     $("#dvf-msg").textContent = "Téléchargement en cours (peut prendre plusieurs minutes)…";

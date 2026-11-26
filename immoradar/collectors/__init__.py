@@ -5,6 +5,6 @@ Chaque collecteur expose :
   collect(criteria_deps, known, log) -> list[dict]   (uniquement pour MODE == "auto")
   manual_links(deps) -> list[{label, url}]            (liens de recherche à ouvrir soi-même)
 """
-from . import avoventes, classiques, domaine, infoencheres, licitor, notaires, vench
+from . import alertes_email, avoventes, classiques, domaine, infoencheres, licitor, notaires, streamestate, vench
 
-ALL = {m.NAME: m for m in (licitor, vench, avoventes, notaires, domaine, infoencheres, classiques)}
+ALL = {m.NAME: m for m in (licitor, vench, alertes_email, streamestate, avoventes, notaires, domaine, infoencheres, classiques)}

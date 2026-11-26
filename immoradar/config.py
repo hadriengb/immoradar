@@ -21,7 +21,7 @@ DEFAULTS = {
         "selection": True,           # n'afficher que les biens pertinents (voir pipeline.pertinence)
         "note_min": 60,              # note minimale (meilleure des deux) pour la sélection
     },
-    "sources": {"licitor": True, "vench": True, "avoventes": True, "notaires": False, "domaine": False},
+    "sources": {"licitor": True, "vench": True, "alertes_email": True, "streamestate": True, "avoventes": True, "notaires": False, "domaine": False},
     "signature": "",                 # signature des mails de demande d'informations
     "actualisation_auto_heures": 0,   # ancien réglage, remplacé par recherche_auto
     "recherche_auto": {"active": True, "heure": 7},   # une recherche par jour, à partir de cette heure

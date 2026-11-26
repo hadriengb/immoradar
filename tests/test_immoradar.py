@@ -944,3 +944,89 @@ class T19Selection(unittest.TestCase):
         self.assertEqual(prix, 200000)                         # pas de hausse d'enchères sur un prix affiché
         lines = finance.frais_acquisition(prix, "amiable", c, item)
         self.assertTrue(any("notaire" in str(l[0]).lower() for l in (lines[0] if isinstance(lines, tuple) else lines)))
+
+
+# Emails d'alerte FICTIFS, construits pour le test (structure type des alertes de portails), aucune vraie annonce.
+ALERTE_SELOGER = (b"From: SeLoger <alertes@seloger.com>\r\nSubject: 3 nouvelles annonces pour votre recherche\r\n"
+    b"Date: Thu, 26 Nov 2026 07:02:00 +0100\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + """
+<html><head><style>.x{color:red}</style></head><body><p>Votre recherche : Paris, jusqu'à 400 000 €</p>
+<table><tr><td><a href="https://www.seloger.com/annonces/achat/appartement/paris-11eme-75/111.htm"><img src="x.jpg"></a></td>
+<td><a href="https://www.seloger.com/annonces/achat/appartement/paris-11eme-75/111.htm">Appartement 2 pièces 38 m²</a><br>Paris 11ème (75011)<br><b>329 000 €</b></td></tr>
+<tr><td><a href="https://www.seloger.com/annonces/achat/maison/lyon-75/222.htm">Maison 5 pièces 110 m²</a><br>Lyon (69003)<br><b>540 000 €</b></td></tr>
+<tr><td><a href="https://www.seloger.com/desinscription">Se désinscrire</a></td></tr></table></body></html>""".encode())
+
+ALERTE_JINKA_TEXTE = (b"From: Jinka <hello@jinka.fr>\r\nSubject: Nouvelle annonce\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+    + "Studio 1 pièce 19 m² - Villeurbanne (69100)\n149 000 €\nVoir l'annonce : https://www.jinka.fr/alert_result?ad=999\n".encode())
+
+
+class T20AlertesEmail(unittest.TestCase):
+    def test_seloger_html(self):
+        from immoradar.collectors import alertes_email
+        items = alertes_email.parse_message(ALERTE_SELOGER)
+        self.assertEqual(len(items), 2)                     # « jusqu'à 400 000 € » (critères) n'est pas une annonce
+        a, b = items
+        self.assertEqual((a["mise_a_prix"], a["surface"], a["rooms"], a["postcode"], a["dep"]), (329000, 38, 2, "75011", "75"))
+        self.assertIn("/111.htm", a["url"])
+        self.assertEqual(a["sale_kind"], "amiable")
+        self.assertEqual(a["source"], "alerte:SeLoger")
+        self.assertEqual((b["type"], b["dep"], b["mise_a_prix"]), ("maison", "69", 540000))
+
+    def test_jinka_text(self):
+        from immoradar.collectors import alertes_email
+        items = alertes_email.parse_message(ALERTE_JINKA_TEXTE)
+        self.assertEqual(len(items), 1)
+        self.assertEqual((items[0]["surface"], items[0]["postcode"], items[0]["city"]), (19, "69100", "Villeurbanne"))
+        self.assertTrue(items[0]["url"].startswith("https://www.jinka.fr/alert_result"))
+
+    def test_not_configured(self):
+        from immoradar.collectors import alertes_email
+        with self.assertRaises(alertes_email.NotConfigured):
+            alertes_email.collect(["75"], {}, lambda m: None)
+
+
+class T21StreamEstate(unittest.TestCase):
+    def test_search_and_mapping(self):
+        import io
+        from immoradar.collectors import streamestate
+        sent = []
+
+        class R(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def opener(req, timeout=0):
+            sent.append(json.loads(req.data))
+            self.assertEqual(req.headers["X-api-key"], "CLE")
+            return R(json.dumps({"data": [{"id": "u1", "attributes": {
+                "propertyType": "FLAT", "area": {"displayed": 41, "unit": "SQM"}, "unit": {"rooms": 2},
+                "pricing": {"displayed": 315000}, "body": {"title": "T2 Bastille"}, "location": {"postalCode": "75011", "city": {"name": "Paris"}},
+                "listings": [{"url": "https://www.leboncoin.fr/ad/ventes_immobilieres/1", "source": {"slug": "leboncoin"}, "publishedAt": "2026-11-25T08:00:00Z"}],
+                "pictures": [{"url": "https://img/1.webp"}]}}], "meta": {"hasNextPage": False}}).encode())
+        items = streamestate.search({"cle_api": "CLE", "communes_insee": ["75056"], "max_annonces": 50}, {"mise_a_prix_max": 400000},
+                                    log=lambda m: None, opener=opener)
+        body = sent[0]
+        self.assertEqual(body["criteria"]["property"]["transaction"]["type"], "SELL")
+        self.assertEqual(body["criteria"]["property"]["pricing"]["displayed"]["lte"], 400000)
+        self.assertEqual(body["size"], 50)
+        it = items[0]
+        self.assertEqual((it["type"], it["surface"], it["rooms"], it["mise_a_prix"], it["postcode"], it["dep"], it["city"]),
+                         ("appartement", 41, 2, 315000, "75011", "75", "Paris"))
+        self.assertIn("leboncoin", it["url"])
+        self.assertEqual(it["sale_kind"], "amiable")
+
+    def test_secrets_masked_and_kept(self):
+        from immoradar import connecteurs
+        connecteurs.save_and_test({"streamestate": {"cle_api": "SECRET", "communes_insee": "75056, 69123"}})
+        pub = connecteurs.public()["streamestate"]
+        self.assertEqual(pub["cle_api"], connecteurs.MASK)
+        self.assertEqual(pub["communes_insee"], ["75056", "69123"])
+        connecteurs.save_and_test({"streamestate": {"cle_api": connecteurs.MASK, "max_annonces": 100}})
+        self.assertEqual(db.get_setting("connecteurs")["streamestate"]["cle_api"], "SECRET")
+        db.set_setting("connecteurs", {})
+
+    def test_partial_params_post_keeps_rest(self):
+        merged = config.deep_merge({"signature": "Jean", "criteres": {"zones": ["idf"]}}, {"criteres": {"zones": ["lyon"]}})
+        self.assertEqual(merged["signature"], "Jean")

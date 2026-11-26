@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import automation, contacts, config, db, documents, opendata, pipeline
+from . import automation, connecteurs, contacts, config, db, documents, opendata, pipeline
 from .collectors import ALL as COLLECTORS
 from .geo_fr import DEPARTEMENTS, ZONES
 
@@ -125,6 +125,8 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/compare":
                 ids = [int(i) for i in qs.get("ids", "").split(",") if i.isdigit()]
                 return self._json([detail(i) for i in ids if detail(i)])
+            if p == "/api/connecteurs":
+                return self._json(connecteurs.public())
             if p == "/api/params":
                 return self._json({"params": config.load(), "defaults": config.DEFAULTS, "zones": ZONES, "departements": DEPARTEMENTS})
             if p.startswith("/api/diagnostic/"):
@@ -180,11 +182,12 @@ class H(BaseHTTPRequestHandler):
                 return self._json(detail(lid))
             if p == "/api/params":
                 body = json.loads(self._body() or b"{}")
-                config.save(body)
+                config.save(config.deep_merge(config.load(), body))   # un envoi partiel (ex. filtres) ne remet pas le reste à zéro
                 pipeline.analyse_all()
                 return self._json({"ok": True, "params": config.load()})
             if p == "/api/params/reset":
-                db.set_setting("params", {})
+                cur = config.load()
+                db.set_setting("params", {k: cur[k] for k in ("signature", "recherche_auto", "criteres", "sources") if k in cur})
                 pipeline.analyse_all()
                 return self._json({"ok": True})
             if p == "/api/seen":
@@ -212,6 +215,11 @@ class H(BaseHTTPRequestHandler):
                 body = json.loads(self._body() or b"{}")
                 res = automation.run_diagnostic(body.get("source", "avoventes"), pipeline.criteria_deps(config.load()["criteres"]))
                 return self._json({k: v for k, v in res.items() if k != "zip"})
+            if p == "/api/connecteurs":
+                body = json.loads(self._body() or b"{}")
+                return self._json(connecteurs.save_and_test(body))
+            if p == "/api/alertes/eml":
+                return self._json(connecteurs.import_eml(self._body(), urllib.parse.unquote(self.headers.get("X-Filename", "alerte.eml"))))
             if p == "/api/import":
                 lid = pipeline.manual_import(json.loads(self._body() or b"{}"))
                 return self._json(detail(lid))

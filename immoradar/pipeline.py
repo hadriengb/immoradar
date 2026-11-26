@@ -252,8 +252,11 @@ def _run(run_id):
                     st.update(status="erreur", message=f"Source injoignable : {e}. Nouvel essai automatique à la prochaine "
                               f"recherche ; les {n_old} annonce(s) déjà lues restent affichées.")
                 except Exception as e:
-                    st.update(status="erreur", message=f"Erreur du collecteur : {type(e).__name__}: {e}")
-                    log(traceback.format_exc())
+                    if type(e).__name__ == "NotConfigured":
+                        st.update(status="à configurer", message=f"{e}")
+                    else:
+                        st.update(status="erreur", message=f"Erreur du collecteur : {type(e).__name__}: {e}")
+                        log(traceback.format_exc())
                 log(f"{mod.LABEL} : {st['status']} — {st['message']}")
             summary["trouvees"] += st["found"]
             summary["nouvelles"] += st["new"]
