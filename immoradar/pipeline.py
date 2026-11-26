@@ -377,6 +377,39 @@ def matches(item, crit, deps):
     return True
 
 
+COMPLETUDE = (  # (points, libellé de ce qui manque, test)
+    (20, "PV descriptif", lambda it, k: any("pv" in x for x in k)),
+    (20, "cahier des conditions de vente", lambda it, k: any("cahier" in x for x in k)),
+    (10, "diagnostics / DPE", lambda it, k: any("diagnostic" in x for x in k) or bool(it.get("dpe"))),
+    (15, "estimation DVF", lambda it, k: it.get("_est_ok")),
+    (8, "surface", lambda it, k: bool(it.get("surface"))),
+    (8, "occupation", lambda it, k: it.get("occupation") not in (None, "inconnu")),
+    (5, "état / travaux", lambda it, k: it.get("works_level") not in (None, "inconnu")),
+    (5, "charges et taxe foncière", lambda it, k: bool(it.get("charges_copro_an") or it.get("taxe_fonciere_an"))),
+    (4, "date de vente", lambda it, k: bool(it.get("sale_date"))),
+    (5, "contact de l'avocat ou du notaire", lambda it, k: bool(it.get("contacts") or it.get("lawyer"))),
+)
+
+
+def completude(item, est_ok):
+    """Note sur 100 de la complétude du dossier : documents lus et données connues."""
+    kinds = [(d.get("kind") or d.get("label") or "").lower() for d in item.get("doc_analyses") or [] if d.get("status") == "analysé"]
+    it = {**item, "_est_ok": est_ok}
+    got, missing = 0, []
+    for pts, label, test in COMPLETUDE:
+        if test(it, kinds):
+            got += pts
+        else:
+            missing.append(label)
+    return got, missing
+
+
+def classement(c):
+    """Classement par défaut : 70 % la meilleure note, 30 % la complétude du dossier."""
+    best = max(c["score_revente"] or 0, c["score_locatif"] or 0)
+    return round(0.7 * best + 0.3 * (c.get("completude") or 0), 1)
+
+
 def card(row, last_run):
     item, data, ov = effective(row)
     an = json.loads(row["analysis"] or "{}")
@@ -394,6 +427,7 @@ def card(row, last_run):
         "doc_count": len([d for d in item.get("doc_analyses") or [] if d.get("status") == "analysé"]),
         "doc_conflicts": item.get("doc_conflicts") or [],
         "verdict": (an.get("avis") or {}).get("verdict"),
+        **dict(zip(("completude", "manque"), completude(item, est.get("status") == "ok"))),
         "sale_kind": item.get("sale_kind"), "occupation": item.get("occupation"), "photo": (item.get("photos") or [None])[0],
         "sources": item.get("sources"), "first_seen": row["first_seen"], "collected_at": item.get("collected_at"),
         "risks": [r for r in item.get("risks") or [] if r.get("severity", 1) > 0], "works_level": item.get("works_level"), "features": item.get("features") or {},
@@ -408,7 +442,9 @@ def card(row, last_run):
 
 
 SORTS = {
-    "interet": lambda c: -max(c["score_revente"] or -1, c["score_locatif"] or -1),
+    "interet": lambda c: (-classement(c), -max(c["score_revente"] or -1, c["score_locatif"] or -1)),
+    "note": lambda c: -max(c["score_revente"] or -1, c["score_locatif"] or -1),
+    "complet": lambda c: (-(c.get("completude") or 0), -max(c["score_revente"] or -1, c["score_locatif"] or -1)),
     "revente": lambda c: -(c["score_revente"] if c["score_revente"] is not None else -1),
     "locatif": lambda c: -(c["score_locatif"] if c["score_locatif"] is not None else -1),
     "rentabilite": lambda c: -(c["rendement_net_pct"] if c["rendement_net_pct"] is not None else -999),
@@ -450,6 +486,8 @@ def list_cards(crit=None, sort="interet", favorites=False, show_hidden=False):
         if not favorites and not matches(item, crit, deps):
             continue
         out.append(card(row, lr))
+    for c in out:
+        c["classement"] = classement(c)
     out.sort(key=SORTS.get(sort, SORTS["interet"]))
     return out
 

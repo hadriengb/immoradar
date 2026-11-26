@@ -26,7 +26,7 @@ async function loadParams() { const j = await api("/api/params"); PARAMS = j.par
 
 function scoreBox(label, v) {
   if (v == null) return `<div class="score s-mute"><span>${label}</span><span class="muted small">non notée</span></div>`;
-  const cls = v >= 60 ? "s-hi" : v >= 40 ? "s-mid" : "s-lo";
+  const cls = v >= 80 ? "s-hi" : v >= 50 ? "s-mid" : "s-lo";
   return `<div class="score ${cls}"><span>${label}</span><b>${v}</b></div>`;
 }
 
@@ -45,6 +45,7 @@ function cardHtml(c, opts = {}) {
       <div class="meta">Mise à prix <b>${eur(c.mise_a_prix)}</b>${c.adjudication_price ? " · adjugé " + eur(c.adjudication_price) : ""} · vente ${c.sale_date ? esc(dfr(c.sale_date)) + (c.sale_time ? " " + esc(c.sale_time) : "") : '<span class="unk">date inconnue</span>'}${c.sale_place ? " · " + esc(c.sale_place) : ""}</div>
       <div class="meta">${est}${c.decote_pct != null ? " · décote apparente " + pct(c.decote_pct) : ""}</div>
       <div class="meta">Source : ${srcs || "—"} · ${esc(c.sale_kind || "type de vente inconnu")}</div>
+      ${c.manque && c.manque.length && c.manque.length <= 6 ? `<div class="meta small muted">Dossier : manque ${esc(c.manque.slice(0, 4).join(", "))}${c.manque.length > 4 ? "…" : ""}</div>` : ""}
       ${c.verdict ? `<div class="meta verdict-line"><b>Avis :</b> ${esc(c.verdict)}</div>` : ""}
       ${c.doc_count ? `<div class="meta">📄 ${c.doc_count} document(s) analysé(s)${c.doc_conflicts.length ? ` · <span style="color:var(--warn)">${c.doc_conflicts.length} écart(s) avec l'annonce</span>` : ""}</div>` : ""}
       ${risks ? `<div class="row" style="margin-top:4px">${risks}</div>` : ""}
@@ -52,6 +53,7 @@ function cardHtml(c, opts = {}) {
     <div class="scores">
       ${scoreBox("Achat-revente", c.score_revente)}
       ${scoreBox("Locatif", c.score_locatif)}
+      <div class="score ${c.completude >= 80 ? "s-hi" : c.completude >= 50 ? "s-mid" : "s-lo"}" title="${c.manque.length ? "Manque : " + esc(c.manque.join(", ")) : "Dossier complet"}"><span>Dossier</span><b>${c.completude} %</b></div>
       <div class="small muted">${c.marge_nette_pct != null ? "Marge nette " + pct(c.marge_nette_pct) + "<br>" : ""}${c.rendement_net_pct != null ? "Rendement net " + pct(c.rendement_net_pct) + "<br>" : ""}${c.prix_max_revente || c.prix_max_locatif ? "Prix max : " + [c.prix_max_revente && "revente " + eur(c.prix_max_revente), c.prix_max_locatif && "locatif " + eur(c.prix_max_locatif)].filter(Boolean).join(" · ") : ""}</div>
       ${opts.compare ? `<label class="inline" onclick="event.stopPropagation()"><input type="checkbox" data-cmp="${c.id}" ${compareSel.has(c.id) ? "checked" : ""}> comparer</label>` : ""}
     </div>
@@ -168,7 +170,7 @@ async function viewAnnonces() {
   app.innerHTML = `<div class="layout">${filtersHtml(PARAMS.criteres)}<div>
     <div class="row space" style="margin-bottom:10px"><h1 style="margin:0">Annonces <span class="muted" id="count"></span></h1>
     <div class="row"><label class="inline">Trier par</label><select id="sort" style="width:auto">
-      ${[["interet", "Intérêt (meilleure note)"], ["revente", "Note achat-revente"], ["locatif", "Note locatif"], ["rentabilite", "Rendement net"], ["marge", "Marge achat-revente"], ["decote", "Décote"], ["prix", "Prix croissant"], ["prix_desc", "Prix décroissant"], ["date", "Date de vente"], ["surface", "Surface"]].map(([v, l]) => `<option value="${v}" ${v === sortSel ? "selected" : ""}>${l}</option>`).join("")}
+      ${[["interet", "Meilleurs dossiers (note + complétude)"], ["note", "Meilleure note"], ["complet", "Dossier le plus complet"], ["revente", "Note achat-revente"], ["locatif", "Note locatif"], ["rentabilite", "Rendement net"], ["marge", "Marge achat-revente"], ["decote", "Décote"], ["prix", "Prix croissant"], ["prix_desc", "Prix décroissant"], ["date", "Date de vente"], ["surface", "Surface"]].map(([v, l]) => `<option value="${v}" ${v === sortSel ? "selected" : ""}>${l}</option>`).join("")}
     </select><button id="imp">+ Import manuel</button></div></div>
     <div class="cards" id="list"></div></div></div>`;
   const refresh = async () => {
@@ -480,7 +482,7 @@ async function viewParams() {
     document.querySelectorAll("[data-src]").forEach(i => np.sources[i.dataset.src] = i.checked);
     await post("/api/automation", {active: $("#ra-active").value === "1", heure: +$("#ra-heure").value});
     np.signature = $("#signature").value;
-    np.scoring.seuil_opportunite = +$("#seuil").value || 60;
+    np.scoring.seuil_opportunite = +$("#seuil").value || 80;
     $("#msg").textContent = "Recalcul…";
     await post("/api/params", np);
     $("#msg").textContent = "Enregistré, toutes les annonces ont été recalculées.";

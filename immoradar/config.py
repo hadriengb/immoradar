@@ -59,7 +59,8 @@ DEFAULTS = {
         "entretien_pct_loyer": 3,
         "rendement_net_cible_pct": 5.5,
     },
-    "scoring": {"seuil_opportunite": 60},
+    "scoring": {"seuil_opportunite": 80},
+    "_version": 2,
 }
 
 TYPE_LABELS = {"appartement": "Appartement", "maison": "Maison", "studio": "Studio", "immeuble": "Immeuble",
@@ -77,7 +78,15 @@ def deep_merge(base, over):
 
 
 def load():
-    return deep_merge(DEFAULTS, db.get_setting("params", {}))
+    stored = db.get_setting("params", {})
+    # 26/11/2026 : le seuil « opportunité intéressante » passe de 60 à 80 (demande de l'utilisateur).
+    # Une ancienne valeur 60 enregistrée (simple défaut de l'époque) est mise à jour une fois.
+    if stored and stored.get("_version", 1) < 2:
+        if (stored.get("scoring") or {}).get("seuil_opportunite") == 60:
+            stored.setdefault("scoring", {})["seuil_opportunite"] = 80
+        stored["_version"] = 2
+        db.set_setting("params", stored)
+    return deep_merge(DEFAULTS, stored)
 
 
 def save(params):

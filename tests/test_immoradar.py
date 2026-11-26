@@ -892,3 +892,33 @@ class T17Automatique(unittest.TestCase):
         self.assertEqual(automation.diagnostic_file(res["name"]), res["zip"])
         self.assertIsNone(automation.diagnostic_file("../immoradar.db"))
         self.assertEqual(vench.MAX_DETAILS, 60)                          # limite remise après le diagnostic
+
+
+class T18ClassementEtSeuil(unittest.TestCase):
+    def test_seuil_80_et_migration(self):
+        old = db.get_setting("params", {})
+        try:
+            self.assertEqual(config.DEFAULTS["scoring"]["seuil_opportunite"], 80)
+            db.set_setting("params", {"scoring": {"seuil_opportunite": 60}})        # ancienne valeur par défaut enregistrée
+            self.assertEqual(config.load()["scoring"]["seuil_opportunite"], 80)
+            db.set_setting("params", {"scoring": {"seuil_opportunite": 70}, "_version": 2})  # choix explicite conservé
+            self.assertEqual(config.load()["scoring"]["seuil_opportunite"], 70)
+        finally:
+            db.set_setting("params", old)
+
+    def test_completude_et_classement(self):
+        from immoradar import documents
+        rec = documents.analyse_bytes("\f".join(PV_PAGES).encode(), "PV descriptif", "collé")
+        vide = {"surface": 30}
+        riche = {"surface": 30, "occupation": "libre", "works_level": "léger", "sale_date": "2027-01-01",
+                 "contacts": [{"name": "Maître X"}], "doc_analyses": [rec]}
+        n0, m0 = pipeline.completude(vide, False)
+        n1, m1 = pipeline.completude(riche, True)
+        self.assertLess(n0, 20)
+        self.assertIn("PV descriptif", m0)
+        self.assertNotIn("PV descriptif", m1)
+        self.assertGreater(n1, 60)
+        a = {"score_revente": 82, "score_locatif": None, "completude": 20}   # bonne note, dossier vide
+        b = {"score_revente": 78, "score_locatif": None, "completude": 90}   # note un peu moins bonne, dossier complet
+        self.assertLess(pipeline.SORTS["interet"]({**b, "classement": 0}), pipeline.SORTS["interet"]({**a, "classement": 0}))
+        self.assertLess(pipeline.SORTS["note"](a), pipeline.SORTS["note"](b))

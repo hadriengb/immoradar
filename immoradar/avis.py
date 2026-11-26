@@ -161,7 +161,7 @@ def build(item, est, sim, scores, params):
     elif F.get("risk:chambre") or F.get("risk:residence_sociale"):
         verdict = ("Bien atypique (chambre / résidence sociale selon le document) : valeur de revente incertaine, "
                    "les estimations automatiques ne s'appliquent pas. N'enchérir que sous le prix plafond prudent.")
-    elif best >= 60 and vig <= 2:
+    elif best >= params.get("scoring", {}).get("seuil_opportunite", 80) and vig <= 2:
         verdict = "Opportunité intéressante, à confirmer par la lecture du cahier des conditions de vente et une visite."
     elif best >= 40:
         verdict = "À étudier : potentiel réel mais points de vigilance à lever."

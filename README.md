@@ -66,6 +66,7 @@ collez aussi le texte de la page (Cmd+A, Cmd+C).
 - Pas d'estimation si moins de 6 comparables DVF (paramétrable) ou si surface / localisation manquent.
 - Toutes les hypothèses de calcul sont visibles ligne par ligne et modifiables (Paramètres, ou par fiche).
 - Un risque juridique majeur (démembrement, squat, péril, copropriété en difficulté) plafonne la note à 40.
+- « Opportunité intéressante » = note ≥ 80 (réglable). Classement par défaut : 70 % meilleure note + 30 % complétude du dossier (PV, cahier, diagnostics lus, estimation, données connues).
 
 ## Documents de vente (PV descriptif, cahier des conditions de vente, diagnostics)
 
