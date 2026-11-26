@@ -220,6 +220,48 @@ function avisHtml(a) {
     <p class="small muted">${esc(a.note)} « confirmé » = lu dans un document (page citée) · « annonce » = lu dans l'annonce · « estimé » = calcul.</p></div>`;
 }
 
+const webUrl = w => /^https?:/i.test(w) ? w : "https://" + w;
+function demandeHtml(m) {
+  if (!m) return "";
+  const contact = c => `<div class="contact"><b>${esc(c.name)}</b>${c.firm ? " · " + esc(c.firm) : ""} <span class="badge b-mute">${esc(c.role)}</span>
+    ${c.address ? `<div class="small">${esc(c.address)}</div>` : ""}
+    <div class="row small">${c.phones.map(p => `<a href="tel:${esc(p.replace(/\s/g, ""))}">📞 ${esc(p)}</a>`).join(" ")}${c.hours ? ` <span class="muted">(${esc(c.hours)})</span>` : ""}
+    ${c.emails.map(e => `<a href="mailto:${esc(e)}">✉️ ${esc(e)}</a>`).join(" ")}
+    ${c.websites.map(w => `<a href="${esc(webUrl(w))}" target="_blank" rel="noopener">🌐 ${esc(w)}</a>`).join(" ")}
+    ${!c.phones.length && !c.emails.length && !c.websites.length ? '<span class="unk">ni téléphone, ni email, ni site dans l\'annonce</span>' : ""}</div>
+    <div class="prov">lu dans : ${esc(c.source)}</div></div>`;
+  const g = m.greffe;
+  const noMail = !m.to.length;
+  const firstPhone = m.contacts.flatMap(c => c.phones)[0], firstWeb = m.contacts.flatMap(c => c.websites)[0];
+  return `<div class="panel" style="margin-top:12px" id="demande"><h3>Contacts et demande d'informations</h3>
+    ${m.contacts.length ? m.contacts.map(contact).join("") : '<p class="unk">Aucun avocat ou notaire trouvé dans l\'annonce.</p>'}
+    ${g ? `<p class="small">📁 Cahier des conditions de vente${g.reference ? ` (réf. greffe <b>${esc(g.reference)}</b>)` : ""}${g.lieu ? " consultable au " + esc(g.lieu) : ""}${g.cabinet_aussi ? " et au cabinet de l'avocat" : ""}. <span class="prov">lu dans : ${esc(g.source)}</span></p>` : ""}
+    ${m.doc_emails.length ? `<p class="small">Adresses email lues dans les documents (vérifiez à qui elles appartiennent : souvent le commissaire de justice) : ${m.doc_emails.map(e => `<a href="#" data-addto="${esc(e.email)}">${esc(e.email)}</a> <span class="prov">(${esc(e.source)})</span>`).join(", ")}</p>` : ""}
+    <h4>À demander (${m.demandes.length})</h4>
+    <ul class="avis">${m.demandes.map(x => `<li>${esc(x.demande)} <span class="prov">(${esc(x.raison)})</span></li>`).join("")}</ul>
+    <h4>Mail prêt à envoyer</h4>
+    <div class="grid g1"><div><label>Destinataire${noMail ? " (aucune adresse email dans l'annonce : à compléter)" : " (lu dans l'annonce)"}</label><input id="dm-to" value="${esc(m.to.join(", "))}" placeholder="adresse email du cabinet"></div>
+    <div><label>Objet</label><input id="dm-subject" value="${esc(m.subject)}"></div>
+    <div><label>Message (modifiable)</label><textarea id="dm-body" rows="16">${esc(m.body)}</textarea></div></div>
+    <div class="row" style="margin-top:8px"><button class="primary" id="dm-open">✉️ Ouvrir dans ma messagerie</button><button id="dm-copy">Copier le message</button><button id="dm-copy-subject">Copier l'objet</button><span id="dm-msg" class="small"></span></div>
+    ${noMail ? `<p class="small muted">Pas d'email dans l'annonce : ${firstPhone ? `appelez le cabinet au <a href="tel:${esc(firstPhone.replace(/\s/g, ""))}">${esc(firstPhone)}</a> pour obtenir son adresse, ` : ""}${firstWeb ? `ou utilisez le formulaire de contact de <a href="${esc(webUrl(firstWeb))}" target="_blank" rel="noopener">${esc(firstWeb)}</a> en y collant le message, ` : ""}ou ouvrez le mail et ajoutez l'adresse vous-même.</p>` : ""}
+    <p class="small muted">ImmoRadar n'envoie rien : le mail s'ouvre dans votre messagerie, vous relisez et vous l'envoyez. Votre signature se règle dans Paramètres.</p></div>`;
+}
+function bindDemande() {
+  if (!$("#demande")) return;
+  const copy = async (txt) => {
+    try { await navigator.clipboard.writeText(txt); } catch (e) { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+    $("#dm-msg").textContent = "Copié ✓"; setTimeout(() => $("#dm-msg").textContent = "", 2000);
+  };
+  $("#dm-open").onclick = () => {
+    const to = $("#dm-to").value.split(/[,;\s]+/).filter(Boolean).map(encodeURIComponent).join(",");
+    location.href = `mailto:${to}?subject=${encodeURIComponent($("#dm-subject").value)}&body=${encodeURIComponent($("#dm-body").value)}`;
+  };
+  $("#dm-copy").onclick = () => copy($("#dm-body").value);
+  $("#dm-copy-subject").onclick = () => copy($("#dm-subject").value);
+  document.querySelectorAll("[data-addto]").forEach(a => a.onclick = e => { e.preventDefault(); const v = $("#dm-to").value.trim(); $("#dm-to").value = v ? v + ", " + a.dataset.addto : a.dataset.addto; });
+}
+
 async function openDetail(id, onChange) {
   const d = await api("/api/listing/" + id);
   const it = d.item, an = d.analysis || {}, est = an.estimation || {}, sim = an.simulation || {}, sc = an.scores || {};
@@ -269,6 +311,7 @@ async function openDetail(id, onChange) {
       </div></div>
     </div>
     <div class="panel" style="margin-top:12px"><h3>Documents</h3>${docs}${docAnalysisHtml(it, d.doc_tools, d.doc_reader)}</div>
+    ${demandeHtml(d.demande)}
     ${(it.doc_conflicts || []).map(c => `<div class="warn"><b>Écart annonce / document :</b> ${esc(c)}</div>`).join("")}
     ${(it.risks || []).length ? `<div class="panel" style="margin-top:12px"><h3>Risques et points d'attention</h3>${it.risks.map(r => `<span class="badge ${r.severity >= 3 ? "b-bad" : r.severity === 2 ? "b-warn" : "b-mute"}" title="${esc(r.quote || "")}">${esc(r.label)}${r.scope === "locatif" ? " (locatif)" : ""}${r.source ? " · " + esc(r.source) + (r.page ? " p." + r.page : "") : ""}</span>`).join(" ")}<p class="small muted">Annonce : détection par mots-clés. Documents : citation et page visibles dans « Ce que disent les documents ».</p></div>` : ""}
     <h2>Estimation de la valeur de marché</h2><div class="panel">${estHtml}</div>
@@ -300,6 +343,7 @@ async function openDetail(id, onChange) {
   };
   const da = $("#doc-analyse"); if (da) da.onclick = () => docPost(JSON.stringify({action: "analyse"}), {"Content-Type": "application/json"});
   $("#doc-file").onchange = e => { const f = e.target.files[0]; if (f) docPost(f, {"Content-Type": "application/pdf", "X-Filename": encodeURIComponent(f.name)}); };
+  bindDemande();
   $("#doc-text-go").onclick = () => docPost(JSON.stringify({text: $("#doc-text").value, label: $("#doc-label").value || "Texte collé"}), {"Content-Type": "application/json"});
   document.querySelectorAll("[data-docrm]").forEach(b => b.onclick = () => docPost(JSON.stringify({remove: b.dataset.docrm}), {"Content-Type": "application/json"}));
   $("#d-fav").onclick = async () => { await post("/api/listing/" + id, {favorite: !d.favorite}); refresh(); };
@@ -394,6 +438,7 @@ async function viewParams() {
     <td class="small">${esc(x.legal)}</td><td>${x.mode === "auto" ? `<label class="inline"><input type="checkbox" data-src="${x.name}" ${p.sources[x.name] !== false ? "checked" : ""}>collecte automatique</label>` : '<span class="badge b-mute">import manuel</span>'}</td></tr>`).join("")}</tbody></table>
     <div class="grid g3"><div><label>Actualisation automatique (heures, 0 = désactivée, l'application doit rester ouverte)</label><input type="number" id="auto-h" value="${p.actualisation_auto_heures}"></div></div>
     <p class="small"><button id="imp2">+ Importer une annonce manuellement</button></p></div>
+  <h2>Mails de demande d'informations</h2><div class="panel"><label>Signature ajoutée en bas des mails préparés (nom, téléphone, email)</label><textarea id="signature" rows="3" placeholder="Prénom Nom\n06 00 00 00 00">${esc(p.signature || "")}</textarea></div>
   <h2>Zones et critères</h2><div class="panel small">Les critères de recherche (zones, départements, villes, types, surfaces, prix, occupation, extérieurs, dates, types de vente) se règlent dans le panneau de filtres de l'onglet <a href="#/annonces">Annonces</a> et sont enregistrés automatiquement. Zones prédéfinies : ${Object.values(DEFS.zones).map(z => esc(z.label) + " (" + z.deps.join(", ") + ")").join(" · ")}.<br>
     <label>Seuil « opportunité intéressante » (note sur 100)</label><input type="number" id="seuil" value="${p.scoring.seuil_opportunite}" style="max-width:120px"></div>
   <h2>Hypothèses de calcul</h2><div class="panel"><div class="grid g3">${Object.entries(c).filter(([k]) => k !== "travaux_m2").map(([k, v]) => field("calculs", k, v, CALC_LABELS[k] || k)).join("")}</div>
@@ -413,6 +458,7 @@ async function viewParams() {
     });
     document.querySelectorAll("[data-src]").forEach(i => np.sources[i.dataset.src] = i.checked);
     np.actualisation_auto_heures = +$("#auto-h").value || 0;
+    np.signature = $("#signature").value;
     np.scoring.seuil_opportunite = +$("#seuil").value || 60;
     $("#msg").textContent = "Recalcul…";
     await post("/api/params", np);

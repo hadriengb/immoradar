@@ -15,7 +15,7 @@ import tempfile
 import urllib.parse
 import urllib.robotparser  # noqa: F401
 
-from . import db, extract
+from . import contacts, db, extract
 from .net import USER_AGENT, FetchError, PoliteClient, raw_get
 
 MAX_PAGES_OCR = 40
@@ -294,8 +294,12 @@ def analyse_pages(pages, label=""):
         _, pg, q = _find(pages, re.escape(m_.group(0)))
         fact("comparable_document", extract.to_number(m_.group(1), m_.group(2)), "Comparable cité dans le document", None, pg, q, apply=False)
 
+    emails = {}
+    for i, pg_txt in enumerate(pages):
+        for e in contacts.EMAIL.findall(pg_txt):
+            emails.setdefault(e.lower(), i + 1)
     return {"kind": kind, "facts": facts, "risks": risks, "warnings": warnings, "pages": len(pages),
-            "chars": len(full)}
+            "chars": len(full), "emails": [{"email": e, "page": p} for e, p in list(emails.items())[:10]]}
 
 
 # ------------------------------------------------------------------ orchestration

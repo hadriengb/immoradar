@@ -9,7 +9,7 @@ ce collecteur est donc générique (il suit les liens internes et ne garde que l
 import re
 import urllib.parse
 
-from .. import extract
+from .. import contacts, extract
 from ..geo_fr import dep_from_text
 from ..net import PoliteClient
 
@@ -90,6 +90,9 @@ def collect(deps, known, log):
             "documents": [{"label": l["text"] or "Document", "url": urllib.parse.urljoin(u, l["href"])}
                           for l in links if l["href"].lower().endswith(".pdf")][:10],
         })
+        d.update(contacts.extract(text, links, NAME))
+        if d["contacts"]:
+            d["lawyer"] = " ; ".join(c["name"] for c in d["contacts"])
         court = re.search(r"Tribunal [Jj]udiciaire d[e'’]\s?[^\n(]{2,60}", text)
         d["sale_place"] = court.group(0) if court else None
         if d["dep"] in deps or d["dep"] is None:

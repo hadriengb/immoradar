@@ -8,7 +8,7 @@ La collecte reste lente (≥ 3 s entre deux pages) et robots.txt est relu à cha
 import re
 import urllib.parse
 
-from .. import extract
+from .. import contacts, extract
 from ..geo_fr import ZONES, dep_from_slug, dep_from_text
 from ..net import PoliteClient
 
@@ -90,9 +90,9 @@ def parse_detail(html, url, meta_hint=None):
     addr = re.search(r"^\s*(\d+[\w ,'’-]{0,10}\s*)?(?:bis |ter )?(rue|avenue|av\.|boulevard|bd|place|all[ée]e|chemin|impasse|quai|cours|route|square|villa|passage|lieu[- ]?dit|lieudit|r[ée]sidence|cit[ée]|hameau)\b[^\n]{2,80}$", text, re.I | re.M)
     if addr:
         d["address"] = extract.cleanup(addr.group(0))
-    law = re.search(r"Ma[iî]tre [^\n,]{3,60},\s*Avocat", text)
-    if law:
-        d["lawyer"] = law.group(0)
+    d.update(contacts.extract(text, links, NAME))
+    if d["contacts"]:
+        d["lawyer"] = " ; ".join(c["name"] + (f" ({c['firm']})" if c.get("firm") else "") for c in d["contacts"])
     vis = re.search(r"Visite[^\n]{5,120}", text)
     if vis:
         d["visit"] = vis.group(0).strip()

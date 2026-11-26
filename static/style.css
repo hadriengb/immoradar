@@ -87,3 +87,6 @@ ul.avis{margin:0;padding-left:18px}ul.avis li{margin:3px 0}
 .nat{display:inline-block;font-size:.75em;padding:0 6px;border-radius:8px;border:1px solid currentColor;margin-right:4px}
 .n-conf{color:var(--ok);font-weight:600}.n-saisi{color:var(--muted,#888)}
 .verdict-line{font-style:italic}
+.g1{grid-template-columns:1fr}
+.contact{padding:8px 0;border-bottom:1px solid var(--line)}.contact .row{gap:12px;margin-top:2px}
+#dm-body{font-family:inherit;line-height:1.45}

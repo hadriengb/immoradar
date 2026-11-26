@@ -629,3 +629,61 @@ class T12LinkedDocuments(unittest.TestCase):
         avis = d["analysis"]["avis"]
         self.assertEqual(avis["valeur_prudente"], 51520)
         self.assertTrue(any(p["ref"] and "p." in p["ref"] for p in avis["sections"]["nature"]))
+
+
+# Bloc « avocats / greffe » recopié de la capture d'une annonce Licitor (Épinay-sur-Seine) fournie par l'utilisateur.
+FIXTURE_CONTACTS = f"""<html><head><meta property="og:title" content="Un appartement, Épinay-sur-Seine, Seine Saint Denis"></head><body>
+<p>Tribunal Judiciaire de Bobigny (Seine Saint Denis)</p><p>{FUT_FR} à 13h30</p>
+<h2>UN APPARTEMENT</h2><p>de 32,18 m², au 5ème et dernier étage, comprenant : entrée, séjour, chambre, cuisine, salle d'eau avec wc, placards</p>
+<h3>Une cave</h3><p><b>Libre</b> au 30/03/2026 (date du PVD)</p><h3>Mise à prix : 27 000 €</h3>
+<p>Épinay-sur-Seine</p><p>76, av. Galliéni</p><p>Visite sur place lundi 30 novembre 2026 de 9h à 10h</p>
+<h3>Maître Jérôme Hocquard, de la SELARL Eloca, Avocat</h3><p>79, bd du Montparnasse - 75006 Paris<br>Tél.: 01 43 26 82 98 (de 10h à 12h)<br>
+<a href="http://www.dgassocies-eloca.fr">www.dgassocies-eloca.fr</a></p>
+<h3>Maître Sylvie Langlais, membre de la SCP Langlais - Chopin, Avocat</h3><p>7 bis, rue de Vincennes - 93100 Montreuil-sous-Bois</p>
+<p><i>Le cahier des conditions de vente, référence Greffe n°26/05931, peut être consulté au Greffe du Juge de l'Exécution du Tribunal Judiciaire de Bobigny et au Cabinet du ou (des) Avocat(s)</i></p>
+</body></html>"""
+
+
+class T13Contacts(unittest.TestCase):
+    def test_extract_from_licitor(self):
+        d = licitor.parse_detail(FIXTURE_CONTACTS, "https://www.licitor.com/annonce/1/2/3/vente-aux-encheres/un-appartement/epinay-sur-seine/seine-saint-denis/123.html")
+        c = d["contacts"]
+        self.assertEqual([x["name"] for x in c], ["Maître Jérôme Hocquard", "Maître Sylvie Langlais"])
+        self.assertEqual(c[0]["firm"], "SELARL Eloca")
+        self.assertEqual(c[0]["phones"], ["01 43 26 82 98"])
+        self.assertEqual(c[0]["hours"], "de 10h à 12h")
+        self.assertEqual(c[0]["websites"], ["www.dgassocies-eloca.fr"])
+        self.assertEqual(c[0]["emails"], [])                     # aucun email dans l'annonce : rien n'est inventé
+        self.assertEqual(c[1]["phones"], [])
+        self.assertIn("93100", c[1]["address"])
+        self.assertEqual(d["greffe"]["reference"], "26/05931")
+        self.assertIn("Bobigny", d["greffe"]["lieu"])
+        self.assertIn("Hocquard", d["lawyer"])
+
+    def test_request_mail(self):
+        from immoradar import contacts
+        d = licitor.parse_detail(FIXTURE_CONTACTS, "https://www.licitor.com/annonce/x.html")
+        d["doc_analyses"] = []
+        m = contacts.request_mail(d, "Jean Test\n06 00 00 00 00")
+        self.assertEqual(m["to"], [])
+        self.assertTrue(m["mailto"].startswith("mailto:?subject="))
+        self.assertIn("26/05931", m["subject"])
+        asked = " ".join(x["demande"] for x in m["demandes"])
+        for w in ("procès-verbal descriptif", "cahier des conditions de vente", "diagnostics", "charges de copropriété", "taxe foncière"):
+            self.assertIn(w, asked)
+        self.assertNotIn("occupation actuelle", asked)          # « Libre » est dans l'annonce
+        self.assertNotIn("dates de visite", asked)
+        self.assertIn("27 000 €", m["body"])
+        self.assertTrue(m["body"].startswith("Maître,"))
+        self.assertIn("Jean Test", m["body"])
+
+    def test_email_from_listing_and_document(self):
+        from immoradar import contacts, documents
+        html = FIXTURE_CONTACTS.replace("Tél.: 01 43 26 82 98", "Tél.: 01 43 26 82 98 - contact@cabinet-test.fr")
+        d = licitor.parse_detail(html, "https://www.licitor.com/annonce/x.html")
+        rec = documents.analyse_bytes("\f".join(PV_PAGES + ["Commissaire de justice : etude@commissaire-test.fr"]).encode(), "PV descriptif", "collé")
+        d["doc_analyses"] = [rec]
+        m = contacts.request_mail(d)
+        self.assertEqual(m["to"], ["contact@cabinet-test.fr"])
+        self.assertEqual(m["doc_emails"][0]["email"], "etude@commissaire-test.fr")   # proposé, jamais mis en destinataire
+        self.assertNotIn("procès-verbal descriptif", " ".join(x["demande"] for x in m["demandes"]))

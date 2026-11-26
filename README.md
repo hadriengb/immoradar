@@ -71,6 +71,13 @@ Lecture des PDF :
 - Linux / Docker (Render) : `pdftotext` (poppler) et `tesseract` + français, inclus dans l'image Docker.
 - Sinon, un PDF non lisible est signalé : collez son texte sur la fiche.
 
+## Contacts et mail de demande d'informations
+
+Sur chaque fiche, « Contacts et demande d'informations » : avocat(s) ou notaire, cabinet, adresse, téléphone, site,
+email et référence greffe du cahier, lus dans l'annonce (jamais inventés, source indiquée). La liste de ce qui manque
+(PV, cahier, diagnostics, charges, taxe foncière, occupation, frais préalables…) produit un mail prêt à envoyer :
+« Ouvrir dans ma messagerie » ou « Copier le message ». ImmoRadar n'envoie rien lui-même. Signature : Paramètres.
+
 ## Tests
 
 ```bash

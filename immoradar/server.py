@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, db, documents, opendata, pipeline
+from . import contacts, config, db, documents, opendata, pipeline
 from .collectors import ALL as COLLECTORS
 from .geo_fr import DEPARTEMENTS, ZONES
 
@@ -55,7 +55,8 @@ def detail(lid):
     c = pipeline.card(row, pipeline.last_run_id())
     srcs = [dict(r) for r in db.q("SELECT source, source_id, url, collected_at FROM listing_sources WHERE listing_id=?", (lid,))]
     return {**c, "item": item, "overrides": ov, "analysis": json.loads(row["analysis"] or "{}"), "raw_sources": srcs,
-            "params": config.load()["calculs"], "doc_tools": documents.tools(), "doc_reader": documents.reader_label()}
+            "params": config.load()["calculs"], "demande": contacts.request_mail(item, config.load().get("signature") or ""),
+            "doc_tools": documents.tools(), "doc_reader": documents.reader_label()}
 
 
 class H(BaseHTTPRequestHandler):

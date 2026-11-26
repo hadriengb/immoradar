@@ -20,6 +20,7 @@ DEFAULTS = {
         "inclure_passees": False,
     },
     "sources": {"licitor": True, "avoventes": True, "notaires": False, "domaine": False},
+    "signature": "",                 # signature des mails de demande d'informations
     "actualisation_auto_heures": 0,   # 0 = désactivée
     "estimation": {
         "annees": 3,

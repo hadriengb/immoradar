@@ -5,7 +5,7 @@ import threading
 import traceback
 from datetime import date
 
-from . import avis, config, db, documents, estimate, finance, opendata, scoring
+from . import avis, config, contacts, db, documents, estimate, finance, opendata, scoring
 from .collectors import ALL as COLLECTORS
 from .geo_fr import ZONES, dep_from_postcode, slugify
 from .net import FetchError, ProtectionDetected, RobotsDisallowed
@@ -443,6 +443,8 @@ def manual_import(fields):
     d["source"] = "manuel:" + src
     d["source_id"] = d.get("url") or f"{src}-{db.now_iso()}"
     d["description"] = text[:3000] if text else None
+    if text:
+        d.update(contacts.extract(text, (), "import manuel"))
     d.setdefault("photos", [])
     d.setdefault("documents", [])
     if d.get("postcode"):
