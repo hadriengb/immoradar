@@ -7,6 +7,9 @@ de marché à partir des ventes réelles DVF, simulations achat-revente et locat
 
 **Mac** : double-cliquez sur `Lancer ImmoRadar.command` (la première fois : clic droit > Ouvrir > Ouvrir).
 Le navigateur s'ouvre tout seul. Gardez la fenêtre du Terminal ouverte ; fermez-la pour arrêter.
+Si macOS bloque le fichier (macOS 15 et plus : « Apple n'a pas pu vérifier… ») : Réglages Système > Confidentialité et
+sécurité > « Ouvrir quand même », ou dans le Terminal : `xattr -dr com.apple.quarantine ~/Downloads/ImmoRadar*`.
+Sans le lanceur : `cd` dans le dossier décompressé puis `python3 run.py`.
 
 Autre système : `python3 run.py` dans le dossier (Python 3.9+, aucune dépendance), puis http://127.0.0.1:8765.
 

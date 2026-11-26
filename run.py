@@ -19,16 +19,31 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 
+def _count_listings(path):
+    try:
+        import sqlite3
+        c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        n = c.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
+        c.close()
+        return n
+    except Exception:
+        return 0
+
+
 def migrate_old_data(data_dir):
-    """Reprend automatiquement les annonces d'une version précédente (dossier data/ d'un ancien zip)."""
-    if os.environ.get("IMMORADAR_DATA") or os.path.exists(os.path.join(data_dir, "immoradar.db")):
+    """Reprend automatiquement les annonces d'une version précédente (dossier data/ d'un ancien zip).
+    Se déclenche aussi si la base actuelle existe mais est vide (premier lancement raté, par exemple)."""
+    if os.environ.get("IMMORADAR_DATA"):
+        return
+    target = os.path.join(data_dir, "immoradar.db")
+    if os.path.exists(target) and _count_listings(target) > 0:
         return
     home = os.path.expanduser("~")
     cands = [os.path.join(HERE, "data", "immoradar.db")]
-    for base in ("Downloads", "Desktop", "Documents", "Téléchargements"):
-        cands += glob.glob(os.path.join(home, base, "*", "data", "immoradar.db"))
-        cands += glob.glob(os.path.join(home, base, "*", "*", "data", "immoradar.db"))
-    cands = [c for c in cands if os.path.isfile(c) and os.path.getsize(c) > 0]
+    for base in ("Downloads", "Desktop", "Documents", "Téléchargements", "Bureau"):
+        for depth in ("*", "*/*", "*/*/*"):
+            cands += glob.glob(os.path.join(home, base, depth, "data", "immoradar.db"))
+    cands = [c for c in set(cands) if os.path.isfile(c) and _count_listings(c) > 0]
     if not cands:
         return
     src = max(cands, key=os.path.getmtime)
@@ -36,8 +51,14 @@ def migrate_old_data(data_dir):
     for name in ("immoradar.db", "reference.db"):
         p = os.path.join(os.path.dirname(src), name)
         if os.path.isfile(p):
+            for ext in ("-wal", "-shm"):  # fichiers WAL de l'ancienne base : à recopier avec elle, ou à effacer côté cible
+                old_side, new_side = p + ext, os.path.join(data_dir, name + ext)
+                if os.path.exists(new_side):
+                    os.remove(new_side)
+                if os.path.isfile(old_side):
+                    shutil.copy2(old_side, new_side)
             shutil.copy2(p, os.path.join(data_dir, name))
-    print(f"Données de la version précédente reprises depuis : {os.path.dirname(src)}")
+    print(f"Données de la version précédente reprises depuis : {os.path.dirname(src)} ({_count_listings(target)} annonces)")
 
 
 def port_free(host, port):
