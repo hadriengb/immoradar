@@ -85,6 +85,8 @@ ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
 ap.add_argument("--search", action="store_true", help="lancer une recherche sans interface puis quitter")
 ap.add_argument("--no-browser", action="store_true")
 ap.add_argument("--test-pdf", metavar="FICHIER", help="tester la lecture d'un PDF puis quitter")
+ap.add_argument("--diagnostic", metavar="SOURCE", nargs="?", const="avoventes",
+                help="interroger une source (avoventes par défaut) et enregistrer les pages reçues dans un zip à m'envoyer")
 a = ap.parse_args()
 
 from immoradar import db  # noqa: E402
@@ -102,6 +104,31 @@ if a.test_pdf:
         print(f"  - {f['label']} : {f['value']}  (p.{f['page']})")
     for r in rec.get("risks", []):
         print(f"  ! {r['label']}  (p.{r['page']})")
+    sys.exit(0)
+
+if a.diagnostic:
+    from immoradar import config, net
+    from immoradar.collectors import ALL
+    mod = ALL.get(a.diagnostic)
+    if not mod or mod.MODE != "auto":
+        sys.exit(f"Source inconnue ou non automatique : {a.diagnostic}. Choix : " + ", ".join(n for n, m in ALL.items() if m.MODE == "auto"))
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    net.DIAG_DIR = os.path.join(db.DATA_DIR, f"diagnostic-{a.diagnostic}-{stamp}")
+    if hasattr(mod, "MAX_DETAILS"):
+        mod.MAX_DETAILS = min(mod.MAX_DETAILS, 5)
+    print(f"Diagnostic {mod.LABEL} : quelques pages lues poliment (robots.txt respecté), enregistrées dans {net.DIAG_DIR}")
+    try:
+        items = mod.collect(pipeline.criteria_deps(config.load()["criteres"]), {}, print)
+        print(f"Annonces reconnues : {len(items)}")
+    except Exception as e:
+        print(f"Arrêt : {type(e).__name__}: {e}")
+    if os.path.isdir(net.DIAG_DIR):
+        z = shutil.make_archive(net.DIAG_DIR, "zip", net.DIAG_DIR)
+        print(f"\nFichier à envoyer : {z}")
+        if sys.platform == "darwin":
+            os.system(f'open -R "{z}"')
+    else:
+        print("Aucune page reçue.")
     sys.exit(0)
 
 if a.search:

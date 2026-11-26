@@ -68,6 +68,14 @@ class FakeSite(BaseHTTPRequestHandler):
             return self._send(f'<a href="{ANNONCE_PATH_LYON}">C</a>')
         if p == ANNONCE_PATH:
             return self._send(FIXTURE_ANNONCE)
+        if p.startswith("/ventes-aux-encheres-par-departement-Essonne.html"):
+            if "p=2" in p:
+                return self._send('<a href="/vente-167305-une-maison-evry.html">m</a>')
+            return self._send(VENCH_LIST)
+        if p == "/vente-167303-un-appartement-de-2158-m-grigny.html":
+            return self._send(VENCH_DETAIL)
+        if p == "/vente-167305-une-maison-evry.html":
+            return self._send(VENCH_DETAIL.replace("13 000.00", "90 000.00").replace("Un APPARTEMENT de 21,58 m²", "Une MAISON de 80 m²"))
         if p == "/docs/pv-descriptif.pdf":
             return self._send(make_pdf(PV_PAGES), "application/pdf")
         if p == ANNONCE_PATH_LYON:
@@ -203,6 +211,7 @@ class T03CollecteEtRecherche(unittest.TestCase):
         licitor.HOME = cls.url
         cls.old_mods = dict(pipeline.COLLECTORS)
         pipeline.COLLECTORS.pop("avoventes")  # pas de réseau ici
+        pipeline.COLLECTORS.pop("vench")
         cls.old_delay = net.PoliteClient.__init__.__defaults__
         net.PoliteClient.__init__.__defaults__ = (0.0, 80)
         # pas de réseau : géocodage, DVF et loyers neutralisés pour ce test
@@ -687,3 +696,108 @@ class T13Contacts(unittest.TestCase):
         self.assertEqual(m["to"], ["contact@cabinet-test.fr"])
         self.assertEqual(m["doc_emails"][0]["email"], "etude@commissaire-test.fr")   # proposé, jamais mis en destinataire
         self.assertNotIn("procès-verbal descriptif", " ".join(x["demande"] for x in m["demandes"]))
+
+
+# Pages Vench de test, construites d'après la structure constatée le 26/11/2026 (fiche 167303, Grigny) ; contenu fictif.
+VENCH_LIST = """<html><body><p>2 ventes aux enchères trouvées</p>
+<a href="https://www.vench.fr/vente-167303-un-appartement-de-2158-m-grigny.html"><h3>Un appartement de 21,58 m² Grigny</h3></a>
+<ul><li>Mise à prix : 13 000.00 €</li><li>Date de la vente : 13/01/27 J - 48</li></ul>
+<a href="https://www.vench.fr/prochaines-ventes-aux-encheres.html?p=2">2</a>
+<a href="/ventes-aux-encheres-par-departement-Essonne.html?p=2">Suivant</a></body></html>"""
+VENCH_DETAIL = """<html><head><meta property="og:title" content="Un APPARTEMENT de 21,58 m² • Grigny">
+<meta property="og:image" content="/vignettes/v75205.jpg"></head><body>
+<h1>Un APPARTEMENT de 21,58 m² • Grigny</h1><p>Vente référence : 167303</p>
+<p>Vente aux enchères publiques - Tribunal judiciaire de EVRY-COURCOURONNES</p>
+<h4>Adresse</h4><p>3 Square Surcouf</p><p>91350 Grigny</p>
+<h4>Date de l'audience</h4><p>13/01/2027 à 10:00</p>
+<h4>Date(s) de visite</h4><p>29/12/2026 à 08:30</p>
+<h4>Type</h4><p>Appartement</p>
+<h4>Description</h4><p>Au 10ème étage du bâtiment C2, un appartement de 21,58 m² comprenant : couloir, salle d'eau avec WC, une pièce, coin cuisine.</p>
+<h4>Occupation</h4><p>Bien occupé</p>
+<h4>Documents</h4><a href="https://document.vench.fr/docs/75206.pdf">Avis Greffe.pdf</a> <a href="https://document.vench.fr/docs/75253.pdf">PVD - CCV - DIAGNOSTICS</a>
+<h4>Mise à prix</h4><p>13 000.00 €</p>
+<p>Consulter le cahier des conditions de vente (RG: 25/00206), s'adresser au Greffe du Juge de l'Exécution du Tribunal Judiciaire de EVRY-COURCOURONNES</p>
+<h4>Avocat poursuivant</h4><p>SELAS AVOCATS ASSOCIES MIORINI</p><p>Maître Priscillia MIORINI Avocat</p>
+<p>Résidence Le Feray - 4 rue Feray, 91100 Corbeil-Essonnes</p><p>01.60.90.13.13</p>
+<p><a href="/cdn-cgi/l/email-protection#abc">[email protected]</a></p>
+<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+<p>Informations PLU réservées aux abonnés</p>""" + "<p>" + "texte de remplissage " * 300 + "</p></body></html>"
+
+
+class T14Vench(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from immoradar.collectors import vench
+        cls.vench = vench
+        cls.srv, cls.url = start_fake()
+        cls.old = vench.HOME
+        vench.HOME = cls.url
+        cls.old_delay = net.PoliteClient.__init__.__defaults__
+        net.PoliteClient.__init__.__defaults__ = (0.0, 80)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.vench.HOME = cls.old
+        net.PoliteClient.__init__.__defaults__ = cls.old_delay
+        cls.srv.shutdown()
+
+    def test_parse_detail(self):
+        d = self.vench.parse_detail(VENCH_DETAIL, "https://www.vench.fr/vente-167303-un-appartement-de-2158-m-grigny.html")
+        self.assertEqual(d["source_id"], "167303")
+        self.assertEqual(d["mise_a_prix"], 13000)
+        self.assertEqual(d["surface"], 21.58)
+        self.assertEqual((d["postcode"], d["city"], d["dep"]), ("91350", "Grigny", "91"))
+        self.assertEqual(d["address"], "3 Square Surcouf")
+        self.assertEqual((d["sale_date"], d["sale_time"]), ("2027-01-13", "10:00"))
+        self.assertIn("Evry-Courcouronnes", d["sale_place"])
+        self.assertEqual(d["occupation"], "occupé")
+        self.assertEqual(len(d["documents"]), 2)
+        self.assertEqual(d["greffe"]["reference"], "25/00206")
+        self.assertEqual(d["contacts"][0]["phones"], ["01 60 90 13 13"])
+        self.assertEqual(d["contacts"][0]["emails"], [])          # email masqué par le site : non décodé
+        self.assertIn("abonnés", d["note_source"])
+        self.assertTrue(d["photos"][0].endswith("/vignettes/v75205.jpg"))
+
+    def test_collect_with_pagination(self):
+        logs = []
+        items = self.vench.collect(["91"], {}, logs.append)    # page normale avec script Cloudflare passif : pas bloquée
+        self.assertEqual(sorted(i["source_id"] for i in items), ["167303", "167305"])
+        self.assertTrue(any("Essonne : 2" in l for l in logs))
+
+    def test_dedup_with_licitor_city_names(self):
+        self.assertEqual(pipeline.city_key("Paris 13ème"), pipeline.city_key("Paris"))
+        a = pipeline.dedup_key({"source": "licitor", "source_id": 1, "dep": "75", "city": "Paris 13eme", "sale_date": "2026-12-03", "mise_a_prix": 10000})
+        b = pipeline.dedup_key({"source": "vench", "source_id": 2, "dep": "75", "city": "Paris", "sale_date": "2026-12-03", "mise_a_prix": 10000.0})
+        self.assertEqual(a, b)
+
+    def test_import_by_url_rules(self):
+        with self.assertRaises(ValueError) as cm:
+            pipeline.import_url("https://www.immobilier.notaires.fr/fr/annonce-immo/123")
+        self.assertIn("Cmd+A", str(cm.exception))
+        self.assertEqual(pipeline.source_for_url("https://www.licitor.com/annonce/1.html").NAME, "licitor")
+        self.assertIsNone(pipeline.source_for_url("https://exemple.org/x"))
+
+
+class T15Protection(unittest.TestCase):
+    def test_weak_markers(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                body = {"/ok": VENCH_DETAIL, "/challenge": "<html><script src='/cdn-cgi/challenge-platform/x.js'></script></html>"}.get(self.path, "")
+                b = body.encode()
+                self.send_response(200 if self.path == "/ok" else 403 if self.path == "/challenge" else 404)
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        try:
+            c = net.PoliteClient(base, min_delay=0)
+            self.assertIn("Grigny", c.get(base + "/ok"))
+            with self.assertRaises(net.ProtectionDetected):
+                c.get(base + "/challenge")
+        finally:
+            srv.shutdown()

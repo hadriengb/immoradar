@@ -73,8 +73,8 @@ def extract(text, links=(), source="annonce"):
         c.pop("header", None)
 
     greffe = None
-    ref = re.search(r"r[ée]f[ée]rence\s+(?:du\s+)?(?:greffe\s+)?(?:RG\s+)?n[°o]?\s?([\w/.\-]+)", text or "", re.I)
-    where = re.search(r"consult[ée]\s+au\s+(Greffe[^.\n]{5,200}?)(?:\s+et\s+au\s+[Cc]abinet|\.|\n|$)", text or "")
+    ref = re.search(r"(?:r[ée]f[ée]rence\s+(?:du\s+)?(?:greffe\s+)?(?:RG\s+)?|\bRG\s*:?\s*)n?[°o]?\s?(\d[\w/.\-]+)", text or "", re.I)
+    where = re.search(r"(?:consult[ée]|s['’]adresser)\s+au\s+(Greffe[^.\n]{5,200}?)(?:\s+et\s+au\s+[Cc]abinet|\.|\n|$)", text or "")
     if ref or where:
         greffe = {"reference": ref.group(1).rstrip(".,") if ref else None,
                   "lieu": " ".join(where.group(1).split()) if where else None,

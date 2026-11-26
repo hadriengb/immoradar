@@ -8,7 +8,7 @@ from datetime import date
 from . import avis, config, contacts, db, documents, estimate, finance, opendata, scoring
 from .collectors import ALL as COLLECTORS
 from .geo_fr import ZONES, dep_from_postcode, slugify
-from .net import FetchError, ProtectionDetected, RobotsDisallowed
+from .net import FetchError, PoliteClient, ProtectionDetected, RobotsDisallowed
 
 STATE = {"running": False, "run_id": None, "log": [], "step": ""}
 _run_lock = threading.Lock()
@@ -28,8 +28,14 @@ def criteria_deps(crit):
 
 # ------------------------------------------------------------------ stockage / déduplication
 
+def city_key(city):
+    """« Paris 13ème », « Paris 13e Arrondissement » et « Paris » donnent la même clé (les sources varient)."""
+    c = slugify(city or "")
+    return re.sub(r"-(\d{1,2})(?:e|er|eme|ieme)?(?:-arrondissement)?$", "", c)
+
+
 def dedup_key(d):
-    city = slugify(d.get("city") or "")
+    city = city_key(d.get("city"))
     if d.get("sale_date") and d.get("mise_a_prix") and (city or d.get("dep")):
         return f"{d.get('dep') or ''}|{city}|{d['sale_date']}|{int(d['mise_a_prix'])}"
     return f"{d['source']}:{d['source_id']}"
@@ -93,6 +99,8 @@ def upsert(d, run_id):
         r = row[0]
         data = merge(json.loads(r["data"]), d)
         db.x("UPDATE listings SET data=?, last_seen=?, last_run_id=? WHERE id=?", (json.dumps(data, ensure_ascii=False), now, run_id, r["id"]))
+        if r["dedup_key"] != key and ":" not in key and not db.q("SELECT id FROM listings WHERE dedup_key=?", (key,)):
+            db.x("UPDATE listings SET dedup_key=? WHERE id=?", (key, r["id"]))  # clé recalculée (règle de ville harmonisée)
         lid, new = r["id"], False
     else:
         data = merge({}, d)
@@ -428,10 +436,56 @@ def list_cards(crit=None, sort="interet", favorites=False, show_hidden=False):
     return out
 
 
+def _host(url):
+    import urllib.parse
+    return urllib.parse.urlparse(url or "").netloc.lower().replace("www.", "")
+
+
+def source_for_url(url):
+    h = _host(url)
+    return next((m for m in COLLECTORS.values() if h and _host(m.HOME) == h), None) if h else None
+
+
+def _finish_import(d):
+    lid, new = upsert(d, last_run_id())
+    geolocate(lid)
+    dep = json.loads(db.q("SELECT data FROM listings WHERE id=?", (lid,))[0]["data"]).get("dep")
+    if dep:
+        opendata.load_dvf_department(dep)
+    opendata.load_loyers()
+    analyse(lid)
+    return lid
+
+
+def import_url(url):
+    """Import d'une annonce à partir de son seul lien, pour les sources dont la lecture automatique est autorisée
+    (robots.txt vérifié). Pour les autres, on demande de coller le texte : rien n'est lu en douce."""
+    mod = source_for_url(url)
+    if mod is None or mod.MODE != "auto" or not hasattr(mod, "parse_detail"):
+        label = mod.LABEL if mod else "Ce site"
+        raise ValueError(f"{label} : lecture automatique non autorisée ou non prise en charge. Ouvrez l'annonce, "
+                         "sélectionnez tout (Cmd+A), copiez (Cmd+C) et collez le texte dans « Texte de l'annonce », avec le lien.")
+    client = PoliteClient(mod.HOME, min_delay=1.0, max_requests=3)
+    d = mod.parse_detail(client.get(url), url)
+    return _finish_import(d)
+
+
 def manual_import(fields):
-    """Import manuel : les valeurs saisies sont marquées « import manuel », le texte collé est analysé."""
+    """Import manuel : les valeurs saisies sont marquées « import manuel », le texte collé est analysé.
+    Un lien seul (sans texte) d'une source autorisée est lu directement."""
     text = fields.get("texte") or ""
+    url = (fields.get("url") or "").strip()
+    if url and not text.strip() and not any(fields.get(k) for k in ("title", "mise_a_prix", "city")):
+        return import_url(url)
+    if url and not fields.get("source") or fields.get("source") == "auto":
+        mod = source_for_url(url)
+        fields = {**fields, "source": mod.NAME if mod else "autre"}
     d = extract.analyse_text(text) if text else {}
+    if text and not fields.get("city"):
+        cp = re.search(r"\b(\d{5})\s+([A-ZÉÈÀ][\w'’ -]{1,40}?)\s*(?:\n|$|,|\()", text)
+        if cp:
+            d.setdefault("postcode", cp.group(1))
+            d.setdefault("city", cp.group(2).strip())
     for k in ("title", "type", "surface", "rooms", "floor", "address", "city", "postcode", "mise_a_prix",
               "adjudication_price", "sale_date", "sale_place", "sale_kind", "occupation", "url"):
         v = fields.get(k)
@@ -451,14 +505,7 @@ def manual_import(fields):
         d["dep"] = dep_from_postcode(d["postcode"])
     if not d.get("sale_kind"):
         d["sale_kind"] = {"notaires": "notariale", "domaine": "domaniale"}.get(src, "judiciaire")
-    lid, new = upsert(d, last_run_id())
-    geolocate(lid)
-    dep = json.loads(db.q("SELECT data FROM listings WHERE id=?", (lid,))[0]["data"]).get("dep")
-    if dep:
-        opendata.load_dvf_department(dep)
-    opendata.load_loyers()
-    analyse(lid)
-    return lid
+    return _finish_import(d)
 
 
 from . import extract  # noqa: E402  (import tardif pour éviter un cycle)

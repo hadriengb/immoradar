@@ -39,9 +39,14 @@ pages par politesse), puis les fichiers DVF des départements concernés sont t�
 | Source | Mode | Constat (26/11/2026) |
 |---|---|---|
 | Licitor | automatique | robots.txt autorise les pages d'annonces ; pas de clause interdisant la collecte ; pas de CAPTCHA constaté |
-| Avoventes | automatique (expérimental) | robots.txt autorise tout ; structure HTML non vérifiée : collecteur générique |
+| Vench | automatique | robots.txt n'exclut que /upload/ ; mentions légales sans clause interdisant la collecte ; parties réservées aux abonnés non lues, emails masqués non décodés |
+| Avoventes | automatique (expérimental) | robots.txt autorise tout ; structure HTML non vérifiée : `python3 run.py --diagnostic` enregistre les pages reçues pour écrire un vrai lecteur |
 | Immobilier des notaires | import manuel | CGU art. 5 : reproduction des annonces interdite |
-| Enchères du Domaine | import manuel | application 100 % JavaScript, pas d'API publique |
+| Info-Enchères | import manuel | CGU : usage strictement personnel, copie et reproduction interdites |
+| Enchères du Domaine | import manuel | application 100 % JavaScript avec cookies obligatoires, pas d'API publique |
+
+Import manuel : collez le lien de l'annonce. Pour Licitor, Vench et Avoventes le lien suffit ; pour les autres,
+collez aussi le texte de la page (Cmd+A, Cmd+C).
 
 ## Fiabilité
 

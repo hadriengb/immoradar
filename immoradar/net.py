@@ -27,10 +27,13 @@ class ProtectionDetected(FetchError):
 
 
 _CHALLENGE_MARKERS = (
-    "cf-chl-", "challenge-platform", "<title>just a moment", "g-recaptcha", "hcaptcha",
-    "captcha-delivery", "datadome", "attention required! | cloudflare",
+    "cf-chl-", "<title>just a moment", "captcha-delivery", "attention required! | cloudflare",
     "please enable js and disable any ad blocker",
 )
+# Indices plus faibles : présents aussi sur des pages normales (script passif, formulaire de contact avec reCAPTCHA).
+# Ils ne comptent comme protection que si la page est en erreur ou quasi vide.
+_WEAK_MARKERS = ("challenge-platform", "g-recaptcha", "hcaptcha", "datadome")
+DIAG_DIR = None  # si défini (run.py --diagnostic), chaque page reçue est enregistrée ici pour analyse
 
 
 def raw_get(url, timeout=TIMEOUT, accept="text/html,application/json;q=0.9,*/*;q=0.8"):
@@ -58,6 +61,16 @@ def raw_get(url, timeout=TIMEOUT, accept="text/html,application/json;q=0.9,*/*;q
         return e.code, body, e.headers
     except Exception as e:  # DNS, timeout, proxy, TLS...
         raise FetchError(f"{type(e).__name__}: {e}") from e
+
+
+def _save_diag(url, status, text):
+    import os
+    import re as _re
+    os.makedirs(DIAG_DIR, exist_ok=True)
+    n = len(os.listdir(DIAG_DIR)) + 1
+    name = f"{n:03d}-{status}-" + _re.sub(r"[^\w.-]+", "_", url.split("://", 1)[-1])[:120] + ".html"
+    with open(os.path.join(DIAG_DIR, name), "w", encoding="utf-8") as fh:
+        fh.write(f"<!-- {url} HTTP {status} -->\n" + text)
 
 
 class PoliteClient:
@@ -110,7 +123,10 @@ class PoliteClient:
         status, body, headers = raw_get(url)
         text = body.decode("utf-8", "replace")
         low = text[:30000].lower()
-        challenged = any(m in low for m in _CHALLENGE_MARKERS)
+        if DIAG_DIR:
+            _save_diag(url, status, text)
+        challenged = any(m in low for m in _CHALLENGE_MARKERS) or \
+            ((status >= 400 or len(text) < 5000) and any(m in low for m in _WEAK_MARKERS))
         if challenged or status in (401, 429):
             raise ProtectionDetected(f"protection anti-robot, CAPTCHA ou authentification (HTTP {status}) sur {url}")
         if status >= 400:

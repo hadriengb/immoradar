@@ -384,9 +384,10 @@ function docAnalysisHtml(it, tools, reader) {
 // ------------------------------------------------------------------ Import manuel
 function openImport(after) {
   $("#modal-body").innerHTML = `<h1>Importer une annonce manuellement</h1>
-  <p class="small muted">Pour les sources qui n'autorisent pas la collecte automatique (Immobilier des notaires, Enchères du Domaine) ou une annonce trouvée ailleurs. Collez le texte de l'annonce : ImmoRadar en extrait surface, pièces, mise à prix, date, occupation… Les champs remplis à la main priment.</p>
+  <p class="small muted"><b>Le plus rapide :</b> collez le lien de l'annonce. Pour Licitor, Vench et Avoventes, ce lien suffit : ImmoRadar lit la page.
+  Pour Immobilier des notaires, Info-Enchères et Enchères du Domaine (lecture automatique non autorisée), ouvrez l'annonce, faites Cmd+A puis Cmd+C et collez le texte ci-dessous avec le lien : surface, pièces, mise à prix, date, ville, occupation et contacts sont extraits. Les autres champs sont facultatifs et priment s'ils sont remplis.</p>
   <div class="panel"><div class="grid g3">
-    <div><label>Source</label><select id="i-source"><option value="notaires">Immobilier des notaires</option><option value="domaine">Enchères du Domaine</option><option value="licitor">Licitor</option><option value="avoventes">Avoventes</option><option value="autre">Autre</option></select></div>
+    <div><label>Source</label><select id="i-source"><option value="auto">(d'après le lien)</option><option value="notaires">Immobilier des notaires</option><option value="domaine">Enchères du Domaine</option><option value="licitor">Licitor</option><option value="avoventes">Avoventes</option><option value="vench">Vench</option><option value="infoencheres">Info-Enchères</option><option value="autre">Autre</option></select></div>
     <div style="grid-column:span 2"><label>Lien de l'annonce</label><input id="i-url" type="url" placeholder="https://…"></div>
     <div><label>Titre</label><input id="i-title"></div>
     <div><label>Type</label><select id="i-type"><option value="">(détecter)</option>${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
@@ -396,13 +397,13 @@ function openImport(after) {
     <div><label>Mise à prix €</label><input id="i-mise_a_prix" type="number"></div><div><label>Date de vente</label><input id="i-sale_date" type="date"></div>
     <div><label>Lieu de vente</label><input id="i-sale_place"></div>
     <div><label>Occupation</label><select id="i-occupation"><option value="">(détecter)</option><option>libre</option><option>occupé</option></select></div>
-  </div><label>Texte de l'annonce (copier-coller)</label><textarea id="i-texte" rows="8"></textarea>
+  </div><label>Texte de l'annonce (copier-coller, facultatif pour Licitor, Vench, Avoventes)</label><textarea id="i-texte" rows="8"></textarea>
   <div class="row" style="margin-top:10px"><button class="primary" id="i-go">Importer et analyser</button><span id="i-msg" class="small"></span></div></div>`;
   $("#modal").classList.remove("hidden");
   $("#i-go").onclick = async () => {
     const body = {};
     ["source", "url", "title", "type", "address", "city", "postcode", "surface", "rooms", "mise_a_prix", "sale_date", "sale_place", "occupation", "texte"].forEach(k => body[k] = $("#i-" + k).value);
-    $("#i-msg").textContent = "Analyse en cours (géocodage et DVF si nécessaire)…";
+    $("#i-msg").textContent = "Lecture et analyse en cours (géocodage et DVF si nécessaire, jusqu'à quelques minutes la première fois)…";
     try { const d = await post("/api/import", body); after && after(); openDetail(d.id, after); }
     catch (e) { $("#i-msg").innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
   };
