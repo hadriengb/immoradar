@@ -13,9 +13,10 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+import urllib.robotparser  # noqa: F401
 
 from . import db, extract
-from .net import FetchError, PoliteClient, raw_get
+from .net import USER_AGENT, FetchError, PoliteClient, raw_get
 
 MAX_PAGES_OCR = 40
 
@@ -135,6 +136,11 @@ def pdf_pages(data):
 # ------------------------------------------------------------------ analyse du texte
 
 def _norm(s):
+    """Espaces normalisés et retours à la ligne « de mise en page » recollés : dans un PDF, une phrase est coupée
+    en fin de ligne (« libre de\ntoute occupation ») ; sans ce recollage, les recherches échoueraient."""
+    s = re.sub(r"[ \t  ]+", " ", s)
+    s = re.sub(r"(?<=[a-zà-ÿ])-\n(?=[a-zà-ÿ])", "", s)                      # césure : « occu-\npation »
+    s = re.sub(r"(?<=[a-zà-ÿ0-9,;'’«(])[ ]?\n[ ]?(?!\s|\d+[.)] |[-•*] )", " ", s)
     return re.sub(r"[ \t  ]+", " ", s)
 
 
@@ -299,8 +305,6 @@ def fetch_document(url):
     p = urllib.parse.urlparse(url)
     client = PoliteClient(f"{p.scheme}://{p.netloc}", min_delay=1.0, max_requests=3)
     client._load_robots()
-    import urllib.robotparser  # noqa: F401
-    from .net import USER_AGENT
     if not client._robots.can_fetch(USER_AGENT, url):
         raise FetchError("robots.txt du site interdit le téléchargement automatique de ce document : "
                          "téléchargez-le vous-même puis déposez-le sur la fiche.")
@@ -330,7 +334,7 @@ DOC_RX = re.compile(r"cahier|conditions de vente|proc[eè]s|pv|descriptif|diagno
 
 def analyse_listing_documents(data, only_new=True):
     """Analyse les documents liés à l'annonce. Modifie data['doc_analyses'] en place. Renvoie le nombre analysé."""
-    done = {d.get("origin") for d in data.get("doc_analyses", [])}
+    done = {d.get("origin") for d in data.get("doc_analyses", []) if d.get("status") not in ("erreur",)}  # on réessaie les erreurs
     out = list(data.get("doc_analyses", []))
     n = 0
     for doc in data.get("documents") or []:

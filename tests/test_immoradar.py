@@ -68,17 +68,50 @@ class FakeSite(BaseHTTPRequestHandler):
             return self._send(f'<a href="{ANNONCE_PATH_LYON}">C</a>')
         if p == ANNONCE_PATH:
             return self._send(FIXTURE_ANNONCE)
+        if p == "/docs/pv-descriptif.pdf":
+            return self._send(make_pdf(PV_PAGES), "application/pdf")
         if p == ANNONCE_PATH_LYON:
             return self._send(f"<p>Tribunal Judiciaire de Lyon (Rhône)</p><p>{FUT_FR} à 13h30</p><h2>Une maison</h2><p>de 95 m² 4 pièces, jardin. Occupée par le propriétaire saisi.</p><h3>Mise à prix : 150 000 €</h3>")
         return self._send("not found", code=404)
 
     def _send(self, body, ctype="text/html", code=200):
-        b = body.encode()
+        b = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
+
+
+def make_pdf(pages):
+    """PDF texte minimal (une page par élément), construit à la main : aucune dépendance."""
+    def esc(t):
+        return t.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", None, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]
+    kids = []
+    for txt in pages:
+        lines = []
+        for para in (txt or " ").split("\n"):
+            while len(para) > 95:
+                cut = para.rfind(" ", 0, 95)
+                cut = cut if cut > 0 else 95
+                lines.append(para[:cut])
+                para = para[cut:].lstrip()
+            lines.append(para)
+        ops = "BT /F1 9 Tf 11 TL 40 800 Td " + " ".join(f"({esc(line)}) Tj T*" for line in lines) + " ET"
+        stream = ops.encode("cp1252", "replace")
+        objs.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {len(objs)} 0 R >>")
+        kids.append(len(objs))
+    objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>"
+    out, offs = bytearray(b"%PDF-1.4\n"), []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(out))
+        out += f"{i} 0 obj\n".encode() + (o if isinstance(o, bytes) else o.encode()) + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode() + b"".join(f"{o:010d} 00000 n \n".encode() for o in offs)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
 
 
 def start_fake():
@@ -537,3 +570,62 @@ class T11Avis(unittest.TestCase):
         self.assertEqual(a["plafond_txt"], "Prix plafond non calculable : valeur ou surface inconnue.")
         self.assertTrue(any("Aucun document" in p["text"] for p in a["sections"]["vigilance"]))
         self.assertTrue(any("Aucune valeur fiable" in p["text"] for p in a["sections"]["valeur"]))
+
+
+class T12LinkedDocuments(unittest.TestCase):
+    """Chemin complet du bouton « Analyser les documents liés » : robots.txt, téléchargement du PDF, lecture, avis."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv, cls.url = start_fake()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def test_download_and_analyse(self):
+        from immoradar import documents
+        if not documents.tools()["pdftotext"] and not documents.tools()["macos"]:
+            self.skipTest("aucun lecteur PDF sur cette machine")
+        data = {"documents": [{"label": "PV descriptif", "url": self.url + "/docs/pv-descriptif.pdf"},
+                              {"label": "Cahier des conditions de vente", "url": self.url + "/data/pub/ccv.pdf"}]}
+        n = documents.analyse_listing_documents(data, only_new=False)
+        self.assertEqual(n, 2)
+        recs = {d["label"]: d for d in data["doc_analyses"]}
+        pv = recs["PV descriptif"]
+        self.assertEqual(pv["status"], "analysé", pv.get("message"))
+        f = {x["field"]: x for x in pv["facts"]}
+        self.assertEqual(f["occupation"]["value"], "libre")
+        self.assertEqual(f["occupation"]["page"], 4)
+        self.assertEqual(f["prix_m2_document"]["value"], 6440)
+        self.assertIn("residence_sociale", {r["code"] for r in pv["risks"]})
+        ccv = recs["Cahier des conditions de vente"]                  # interdit par robots.txt : refus propre, pas une erreur
+        self.assertEqual(ccv["status"], "non téléchargé")
+        self.assertIn("robots.txt", ccv["message"])
+
+    def test_button_through_api(self):
+        """Même chose via l'API du serveur, comme le bouton de la fiche, jusqu'à l'avis."""
+        from immoradar import documents, server
+        if not documents.tools()["pdftotext"] and not documents.tools()["macos"]:
+            self.skipTest("aucun lecteur PDF sur cette machine")
+        lid = pipeline.manual_import({"title": "Test documents liés", "type": "appartement", "surface": "16.18", "city": "Paris 13e",
+                                      "mise_a_prix": "10000", "url": self.url + "/annonce-test"})
+        row = db.q("SELECT data FROM listings WHERE id=?", (lid,))[0]
+        data = json.loads(row["data"])
+        data["documents"] = [{"label": "PV descriptif", "url": self.url + "/docs/pv-descriptif.pdf"}]
+        db.x("UPDATE listings SET data=? WHERE id=?", (json.dumps(data), lid))
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            req = urllib.request.Request(f"{base}/api/listing/{lid}/documents", data=b'{"action": "analyse"}',
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            d = json.load(urllib.request.urlopen(req, timeout=60))
+        finally:
+            httpd.shutdown()
+        recs = d["item"]["doc_analyses"]
+        self.assertEqual(recs[0]["status"], "analysé", recs[0].get("message"))
+        self.assertEqual(d["item"]["occupation"], "libre")
+        avis = d["analysis"]["avis"]
+        self.assertEqual(avis["valeur_prudente"], 51520)
+        self.assertTrue(any(p["ref"] and "p." in p["ref"] for p in avis["sections"]["nature"]))
