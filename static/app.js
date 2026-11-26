@@ -45,6 +45,7 @@ function cardHtml(c, opts = {}) {
       <div class="meta">Mise à prix <b>${eur(c.mise_a_prix)}</b>${c.adjudication_price ? " · adjugé " + eur(c.adjudication_price) : ""} · vente ${c.sale_date ? esc(dfr(c.sale_date)) + (c.sale_time ? " " + esc(c.sale_time) : "") : '<span class="unk">date inconnue</span>'}${c.sale_place ? " · " + esc(c.sale_place) : ""}</div>
       <div class="meta">${est}${c.decote_pct != null ? " · décote apparente " + pct(c.decote_pct) : ""}</div>
       <div class="meta">Source : ${srcs || "—"} · ${esc(c.sale_kind || "type de vente inconnu")}</div>
+      ${c.doc_count ? `<div class="meta">📄 ${c.doc_count} document(s) analysé(s)${c.doc_conflicts.length ? ` · <span style="color:var(--warn)">${c.doc_conflicts.length} écart(s) avec l'annonce</span>` : ""}</div>` : ""}
       ${risks ? `<div class="row" style="margin-top:4px">${risks}</div>` : ""}
     </div>
     <div class="scores">
@@ -253,8 +254,9 @@ async function openDetail(id, onChange) {
         ${f("Sources", (it.sources || []).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.source)}</a> <span class="muted small">collecté ${dtfr(s.collected_at)}</span>`).join("<br>"))}
       </div></div>
     </div>
-    <div class="panel" style="margin-top:12px"><h3>Documents</h3>${docs}</div>
-    ${(it.risks || []).length ? `<div class="panel" style="margin-top:12px"><h3>Risques détectés dans le texte</h3>${it.risks.map(r => `<span class="badge ${r.severity >= 3 ? "b-bad" : r.severity === 2 ? "b-warn" : "b-mute"}">${esc(r.label)}</span>`).join(" ")}<p class="small muted">Détection par mots-clés : à confirmer dans le cahier des conditions de vente.</p></div>` : ""}
+    <div class="panel" style="margin-top:12px"><h3>Documents</h3>${docs}${docAnalysisHtml(it, d.doc_tools)}</div>
+    ${(it.doc_conflicts || []).map(c => `<div class="warn"><b>Écart annonce / document :</b> ${esc(c)}</div>`).join("")}
+    ${(it.risks || []).length ? `<div class="panel" style="margin-top:12px"><h3>Risques et points d'attention</h3>${it.risks.map(r => `<span class="badge ${r.severity >= 3 ? "b-bad" : r.severity === 2 ? "b-warn" : "b-mute"}" title="${esc(r.quote || "")}">${esc(r.label)}${r.scope === "locatif" ? " (locatif)" : ""}${r.source ? " · " + esc(r.source) + (r.page ? " p." + r.page : "") : ""}</span>`).join(" ")}<p class="small muted">Annonce : détection par mots-clés. Documents : citation et page visibles dans « Ce que disent les documents ».</p></div>` : ""}
     <h2>Estimation de la valeur de marché</h2><div class="panel">${estHtml}</div>
     ${(sim.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join("")}
     <h2>A. Achat-revente</h2><div class="panel">${arHtml}</div>
@@ -263,7 +265,7 @@ async function openDetail(id, onChange) {
     <h2>Corriger ou compléter (vos valeurs priment sur celles de la source)</h2>
     <div class="panel"><div class="grid g4">
       ${oi("surface", "Surface m²")}${oi("rooms", "Pièces")}${oi("floor", "Étage")}${oi("mise_a_prix", "Mise à prix €")}
-      ${oi("prix_envisage_manuel", "Prix d'achat envisagé €")}${oi("travaux_manuel", "Travaux € (montant)")}${oi("loyer_manuel", "Loyer mensuel HC €")}${oi("adjudication_price", "Prix d'adjudication €")}
+      ${oi("prix_envisage_manuel", "Prix d'achat envisagé €")}${oi("travaux_manuel", "Travaux € (montant)")}${oi("loyer_manuel", "Loyer mensuel HC €")}${oi("adjudication_price", "Prix d'adjudication €")}${oi("valeur_marche_manuel", "Ma valeur de marché €")}
       ${oi("address", "Adresse", "text")}${oi("city", "Ville", "text")}${oi("postcode", "Code postal", "text")}${oi("sale_date", "Date de vente", "date")}
       <div><label>Type</label><select data-ov="type"><option value="">(source)</option>${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${ov.type === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div><label>Occupation</label><select data-ov="occupation"><option value="">(source)</option><option ${ov.occupation === "libre" ? "selected" : ""}>libre</option><option ${ov.occupation === "occupé" ? "selected" : ""}>occupé</option></select></div>
@@ -274,6 +276,18 @@ async function openDetail(id, onChange) {
     ${it.description ? `<details><summary>Texte de l'annonce (extrait)</summary><div class="panel small" style="white-space:pre-wrap">${esc(it.description)}</div></details>` : ""}`;
   $("#modal").classList.remove("hidden");
   const refresh = () => { openDetail(id, onChange); onChange && onChange(); };
+  const docPost = async (body, headers) => {
+    $("#doc-msg").textContent = "Lecture et analyse en cours…";
+    try {
+      const r = await fetch(`/api/listing/${id}/documents`, {method: "POST", headers, body});
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+      refresh();
+    } catch (e) { $("#doc-msg").innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+  };
+  const da = $("#doc-analyse"); if (da) da.onclick = () => docPost(JSON.stringify({action: "analyse"}), {"Content-Type": "application/json"});
+  $("#doc-file").onchange = e => { const f = e.target.files[0]; if (f) docPost(f, {"Content-Type": "application/pdf", "X-Filename": encodeURIComponent(f.name)}); };
+  $("#doc-text-go").onclick = () => docPost(JSON.stringify({text: $("#doc-text").value, label: $("#doc-label").value || "Texte collé"}), {"Content-Type": "application/json"});
+  document.querySelectorAll("[data-docrm]").forEach(b => b.onclick = () => docPost(JSON.stringify({remove: b.dataset.docrm}), {"Content-Type": "application/json"}));
   $("#d-fav").onclick = async () => { await post("/api/listing/" + id, {favorite: !d.favorite}); refresh(); };
   $("#d-hide").onclick = async () => { await post("/api/listing/" + id, {hidden: !d.hidden}); refresh(); };
   $("#d-save").onclick = async () => {
@@ -285,6 +299,29 @@ async function openDetail(id, onChange) {
 }
 $("#modal-close").onclick = () => $("#modal").classList.add("hidden");
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); });
+
+const FACT_FMT = v => typeof v === "number" ? (v >= 1000 ? eur(v) : num(v)) : esc(v ?? "—");
+function docAnalysisHtml(it, tools) {
+  const das = it.doc_analyses || [];
+  const rows = das.map(d => `<tr><td><b>${esc(d.kind || d.label)}</b><div class="small muted">${esc(d.label)} · ${esc(d.method || "")} · ${dtfr(d.analysed_at)}</div></td>
+    <td><span class="badge ${d.status === "analysé" ? "b-ok" : "b-warn"}">${esc(d.status)}</span>${d.message ? `<div class="small">${esc(d.message)}</div>` : ""}</td>
+    <td class="right"><button class="small" data-docrm="${esc(d.origin)}">retirer</button></td></tr>`).join("");
+  const facts = das.filter(d => d.status === "analysé").flatMap(d => (d.facts || []).map(f => ({...f, doc: d.kind || d.label})));
+  const risks = das.filter(d => d.status === "analysé").flatMap(d => (d.risks || []).map(r => ({...r, doc: d.kind || d.label})));
+  const ocr = tools && !tools.tesseract ? `<span class="small muted">OCR non installé : un PDF scanné ne pourra pas être lu automatiquement (collez alors son texte).</span>` : "";
+  return `<h3 style="margin-top:16px">Ce que disent les documents</h3>
+    ${das.length ? `<table><tbody>${rows}</tbody></table>` : '<p class="small muted">Aucun document analysé pour l\'instant.</p>'}
+    ${facts.length || risks.length ? `<div style="overflow:auto"><table><thead><tr><th>Information</th><th>Valeur</th><th>Document</th><th>Citation</th><th>Utilisée</th></tr></thead><tbody>
+      ${facts.map(f => `<tr><td>${esc(f.label)}</td><td>${f.value === null ? "—" : FACT_FMT(f.value)}</td><td class="small">${esc(f.doc)}${f.page ? " p." + f.page : ""}</td><td class="small muted">« ${esc(f.quote)} »</td><td class="small">${f.apply ? "oui, prime sur l'annonce" : "affichée seulement"}</td></tr>`).join("")}
+      ${risks.map(r => `<tr><td>${esc(r.label)}</td><td><span class="badge ${r.severity >= 3 ? "b-bad" : r.severity === 2 ? "b-warn" : "b-mute"}">${r.severity ? "risque " + r.severity + "/3" : "info"}</span></td><td class="small">${esc(r.doc)}${r.page ? " p." + r.page : ""}</td><td class="small muted">« ${esc(r.quote)} »</td><td class="small">${r.severity ? "dans la note" : "—"}</td></tr>`).join("")}
+    </tbody></table></div>` : ""}
+    <div class="row" style="margin-top:8px">${(it.documents || []).length ? '<button id="doc-analyse">Analyser les documents liés</button>' : ""}
+      <label class="inline btn">Déposer un PDF<input type="file" id="doc-file" accept=".pdf,.txt" style="display:none"></label>${ocr}</div>
+    <details><summary>Coller le texte d'un document (PV, cahier des conditions de vente, diagnostics…)</summary>
+      <input id="doc-label" placeholder="Nom du document (ex. PV descriptif)"><textarea id="doc-text" rows="6" style="margin-top:6px"></textarea>
+      <button id="doc-text-go" style="margin-top:6px">Analyser ce texte</button></details>
+    <div id="doc-msg" class="small"></div>`;
+}
 
 // ------------------------------------------------------------------ Import manuel
 function openImport(after) {

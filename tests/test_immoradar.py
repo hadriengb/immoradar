@@ -402,3 +402,89 @@ class T08Auth(unittest.TestCase):
         finally:
             server.PASSWORD = old
             srv.shutdown()
+
+
+# Extraits du PV de description du 02/07/2026 (70 bd Vincent Auriol, Paris 13e) transmis par l'utilisateur,
+# découpés par page comme dans le document (pages 3, 4, 5, 9, 13, 23, 24, 27).
+PV_PAGES = [""] * 2 + [
+    "1. DESIGNATION DU BIEN SAISI\nLe lot numéro SIX (6) de l'état descriptif de division :\nUne CHAMBRE et une salle de bains avec water-closet au premier étage, "
+    "comprenant un droit à la jouissance exclusive d'un balcon.\nConstituant le lot d'enchères sur la mise à prix : DIX MILLE EUROS (10.000,00€).",
+    "Que les acquéreurs ont engagé une action en nullité de la vente et que par jugement du 2 mai 2002 ... a prononcé la nullité de la vente.\n"
+    "5. CONDITIONS D'OCCUPATION\nLe lot n°6 comprenant la chambre et la salle de bains avec water-closet est vide et libre de toute occupation.\n"
+    "6. DESCRIPTION DU LOT N°6\nIl s'agit d'une chambre d'environ 8m2, avec une salle de bain et un water-closet, située dans une résidence sociale.",
+    "De manière générale, l'appartement est en état d'usage.\nL'entrée est éclairée par un spot lumineux non fonctionnel au moment des constatations.",
+    "", "", "",
+    "Le sol est recouvert d'un carrelage à l'état d'usage, dont un carreau à l'entrée est fissuré.\nIl est d'aspect moderne mais vétuste. La bonde est absente.",
+    "Les trappes de visite carrelées sont cassées et fissurées.", "", "",
+    "La chambre dispose d'un balcon filant partagé avec deux autres chambres.\nAu sol, la chape en béton comporte plusieurs fissurations.",
+] + [""] * 9 + [
+    "LIQUIDATION JUDICIAIRE\nQue selon le site internet « Meilleurs Agents » le prix moyen du mètre carré retenu est de 6.440 € ; qu'il ressort d'annonces "
+    "immobilières qu'une pièce de 8m² (chambre avec salle de bains) est proposée à la vente à 65.000 €.\n"
+    "Que d'après la demande de renseignements certifié au 16 mars 2026, ces biens et droits immobiliers ne sont grevés d'aucune inscription d'hypothèque.",
+    "Les adjudications réalisées en application des alinéas qui précèdent emportent purge des hypothèques.",
+    "", "",
+    "ORDONNONS la vente aux enchères publiques EN UN LOT D'ENCHERES\nSUR LA MISE A PRIX DE : DIX MILLE EUROS (10.000 €) AVEC FACULTE DE BAISSE D'UN TIERS PUIS DE MOITIE EN CAS DE CARENCE D'ENCHERES",
+]
+
+
+class T09Documents(unittest.TestCase):
+    def test_pv_analysis(self):
+        from immoradar import documents
+        r = documents.analyse_pages(PV_PAGES, "PV descriptif")
+        self.assertEqual(r["kind"], "PV descriptif")
+        f = {x["field"]: x for x in r["facts"]}
+        self.assertEqual(f["occupation"]["value"], "libre")
+        self.assertEqual(f["occupation"]["page"], 4)
+        self.assertEqual(f["works_level"]["value"], "léger")       # « état d'usage » + plusieurs défauts
+        self.assertEqual(f["surface_document"]["value"], 8)
+        self.assertFalse(f["surface_document"]["apply"])           # « environ » : affiché, n'écrase pas la surface
+        self.assertIn("lots_count", f)                             # « en un lot d'enchères »
+        self.assertIn("baisse", f["baisse_mise_a_prix"]["value"].lower())
+        self.assertEqual(f["prix_m2_document"]["value"], 6440)
+        self.assertEqual(f["comparable_document"]["value"], 65000)
+        codes = {x["code"]: x for x in r["risks"]}
+        for c in ("liquidation", "nullite", "residence_sociale", "chambre", "hypotheque_ok", "purge", "balcon_partage"):
+            self.assertIn(c, codes)
+        self.assertEqual(codes["hypotheque_ok"]["severity"], 0)
+
+    def test_apply_and_conflicts(self):
+        from immoradar import documents
+        rec = documents.analyse_bytes("\f".join(PV_PAGES).encode(), "PV descriptif", "collé")
+        self.assertEqual(rec["status"], "analysé")
+        item = {"surface": 16.18, "occupation": None, "lots_count": 2, "mise_a_prix": 10000, "risks": [], "doc_analyses": [rec], "prov": {}}
+        conflicts = documents.apply_to_item(item)
+        self.assertEqual(item["occupation"], "libre")
+        self.assertIn("PV descriptif p.4", item["prov"]["occupation"])
+        self.assertIsNone(item["lots_count"])
+        self.assertEqual(item["surface"], 16.18)
+        self.assertTrue(any("Surface" in c for c in conflicts))
+
+    def test_baisse_not_multilot(self):
+        d = extract.analyse_text("Mise à prix : 10 000 € avec faculté de baisse d'un tiers puis de moitié. Mise à prix : 6 667 €")
+        self.assertIsNone(d["lots_count"])
+        self.assertIsNotNone(d["baisse_mise_a_prix"])
+        d2 = extract.analyse_text("Lot 1 Mise à prix : 50 000 €. Lot 2 Mise à prix : 30 000 €")
+        self.assertEqual(d2["lots_count"], 2)
+
+    def test_scanned_pdf_without_text(self):
+        from immoradar import documents
+        if not documents.tools()["pdftotext"]:
+            self.skipTest("pdftotext absent")
+        # PDF minimal sans texte (une page vide) : doit être signalé comme illisible si pas d'OCR
+        pdf = (b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+               b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF")
+        rec = documents.analyse_bytes(pdf, "scan", "test")
+        if not documents.tools()["tesseract"]:
+            self.assertEqual(rec["status"], "illisible")
+
+    def test_dpe_g_blocks_rental_only(self):
+        from immoradar import documents
+        r = documents.analyse_pages(["Diagnostic de performance énergétique\nClasse énergie : G"], "DPE")
+        risk = [x for x in r["risks"] if x["code"] == "dpe_g"][0]
+        item = {"risks": [risk], "occupation": "libre", "works_level": "aucun"}
+        est = {"status": "ok", "confidence": 80, "valeur": {"central": 300000}}
+        sim = {"achat_revente": {"prix_envisage": 100000, "marge_nette_pct": 40, "prix_max_conseille": 200000},
+               "locatif": {"prix_envisage": 100000, "rendement_net_pct": 9, "cashflow_mensuel": 300, "prix_max_conseille": 200000}}
+        s = scoring.score(item, est, sim)
+        self.assertIsNone(s["revente"]["cap"])
+        self.assertLessEqual(s["locatif"]["score"], 40)

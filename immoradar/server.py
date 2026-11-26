@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, db, opendata, pipeline
+from . import config, db, documents, opendata, pipeline
 from .collectors import ALL as COLLECTORS
 from .geo_fr import DEPARTEMENTS, ZONES
 
@@ -54,7 +54,7 @@ def detail(lid):
     c = pipeline.card(row, pipeline.last_run_id())
     srcs = [dict(r) for r in db.q("SELECT source, source_id, url, collected_at FROM listing_sources WHERE listing_id=?", (lid,))]
     return {**c, "item": item, "overrides": ov, "analysis": json.loads(row["analysis"] or "{}"), "raw_sources": srcs,
-            "params": config.load()["calculs"]}
+            "params": config.load()["calculs"], "doc_tools": documents.tools()}
 
 
 class H(BaseHTTPRequestHandler):
@@ -136,6 +136,9 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/search":
                 rid = pipeline.run_search()
                 return self._json({"run_id": rid, "already_running": rid is None})
+            m = re.fullmatch(r"/api/listing/(\d+)/documents", p)
+            if m:
+                return self._json(self._documents(int(m.group(1))))
             m = re.fullmatch(r"/api/listing/(\d+)", p)
             if m:
                 lid = int(m.group(1))
@@ -146,7 +149,7 @@ class H(BaseHTTPRequestHandler):
                     db.x("UPDATE listings SET hidden=? WHERE id=?", (1 if body["hidden"] else 0, lid))
                 if "overrides" in body:
                     ov = {k: v for k, v in body["overrides"].items() if k in pipeline.OVERRIDABLE and v not in ("", None)}
-                    for k in ("surface", "mise_a_prix", "adjudication_price", "prix_envisage_manuel", "loyer_manuel", "travaux_manuel"):
+                    for k in ("surface", "mise_a_prix", "adjudication_price", "prix_envisage_manuel", "loyer_manuel", "travaux_manuel", "valeur_marche_manuel"):
                         if k in ov:
                             ov[k] = float(ov[k])
                     for k in ("rooms", "floor"):
@@ -188,6 +191,35 @@ class H(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 400)
         except Exception as e:
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _documents(self, lid):
+        """POST /api/listing/<id>/documents
+        - JSON {"action": "analyse"} : télécharge (si robots.txt l'autorise) et analyse les documents liés ;
+        - JSON {"text": "...", "label": "..."} : analyse un texte collé ;
+        - corps binaire (PDF) avec en-tête X-Filename : analyse un fichier déposé."""
+        row = db.q("SELECT data FROM listings WHERE id=?", (lid,))
+        if not row:
+            raise ValueError("annonce introuvable")
+        data = json.loads(row[0]["data"])
+        ctype = self.headers.get("Content-Type", "")
+        raw = self._body()
+        if "json" in ctype:
+            body = json.loads(raw or b"{}")
+            if body.get("action") == "analyse":
+                documents.analyse_listing_documents(data, only_new=False)
+            elif body.get("text"):
+                label = body.get("label") or "Texte collé"
+                rec = documents.analyse_bytes(body["text"].encode("utf-8"), label, "collé : " + label)
+                data["doc_analyses"] = [d for d in data.get("doc_analyses", []) if d.get("origin") != rec["origin"]] + [rec]
+            elif body.get("remove"):
+                data["doc_analyses"] = [d for d in data.get("doc_analyses", []) if d.get("origin") != body["remove"]]
+        else:
+            name = urllib.parse.unquote(self.headers.get("X-Filename", "document.pdf"))
+            rec = documents.analyse_bytes(raw, name, "déposé : " + name)
+            data["doc_analyses"] = [d for d in data.get("doc_analyses", []) if d.get("origin") != rec["origin"]] + [rec]
+        db.x("UPDATE listings SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), lid))
+        pipeline.analyse(lid)
+        return detail(lid)
 
     def _static(self, p):
         if p in ("", "/"):

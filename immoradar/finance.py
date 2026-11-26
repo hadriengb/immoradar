@@ -16,7 +16,7 @@ def emoluments_vente_judiciaire(prix):
     return tot * 1.2
 
 
-def frais_acquisition(prix, sale_kind, c):
+def frais_acquisition(prix, sale_kind, c, item=None):
     lines = []
     if sale_kind in ("notariale", "domaniale"):
         v = prix * c["frais_acquisition_notariale_pct"] / 100
@@ -24,11 +24,30 @@ def frais_acquisition(prix, sale_kind, c):
     else:
         dm = prix * (c["droits_mutation_pct"] + c["csi_pct"]) / 100
         lines.append(("Droits de mutation + CSI", dm, f"{c['droits_mutation_pct']} % + {c['csi_pct']} % du prix", "hypothèse (taux légal du département à vérifier)"))
-        lines.append(("Frais préalables (taxés)", c["frais_prealables"], "montant forfaitaire saisi", "hypothèse (montant réel annoncé avant les enchères)"))
+        fp = (item or {}).get("frais_prealables")
+        if fp is not None:
+            lines.append(("Frais préalables (taxés)", float(fp), (item.get("prov") or {}).get("frais_prealables", "document"), "document"))
+        else:
+            lines.append(("Frais préalables (taxés)", c["frais_prealables"], "montant forfaitaire saisi", "hypothèse (montant réel annoncé avant les enchères)"))
         if c["emoluments_bareme"]:
             lines.append(("Émoluments avocat poursuivant (TTC)", emoluments_vente_judiciaire(prix), "barème réglementé A444-191", "estimé"))
         lines.append(("Honoraires avocat enchérisseur", c["honoraires_avocat"], "montant saisi", "hypothèse"))
     return lines
+
+
+def annual_copro(item, c):
+    v = item.get("charges_copro_an")
+    return float(v) if v is not None else c["charges_copro_m2_an"] * (item.get("surface") or 0)
+
+
+def annual_tf(item, c):
+    v = item.get("taxe_fonciere_an")
+    return float(v) if v is not None else c["taxe_fonciere_m2_an"] * (item.get("surface") or 0)
+
+
+def _src(item, field, hyp):
+    p = (item.get("prov") or {}).get(field)
+    return (f"montant lu : {p}", "document") if item.get(field) is not None else (hyp, "hypothèse")
 
 
 def mensualite(capital, taux_pct, ans):
@@ -62,11 +81,11 @@ def prix_envisage(item, c):
 
 def _resale(prix, item, valeur, c):
     sfc = item.get("surface") or 0
-    fa = frais_acquisition(prix, item.get("sale_kind"), c)
+    fa = frais_acquisition(prix, item.get("sale_kind"), c, item)
     tot_fa = sum(l[1] for l in fa)
     trv, trv_f, trv_s = travaux(item, c)
     mois = c["duree_detention_mois"]
-    charges = (c["charges_copro_m2_an"] + c["taxe_fonciere_m2_an"]) * sfc * mois / 12 + c["energie_assurance_mois"] * mois
+    charges = (annual_copro(item, c) + annual_tf(item, c)) * mois / 12 + c["energie_assurance_mois"] * mois
     base = prix + tot_fa + trv
     emprunt = base * (1 - c["apport_pct"] / 100)
     fin = emprunt * (c["taux_credit_pct"] + c["assurance_emprunteur_pct"]) / 100 * mois / 12 + emprunt * c["frais_dossier_garantie_pct"] / 100
@@ -87,7 +106,7 @@ def _resale(prix, item, valeur, c):
 
 def _rental(prix, item, loyer_mensuel_hc, c):
     sfc = item.get("surface") or 0
-    fa = frais_acquisition(prix, item.get("sale_kind"), c)
+    fa = frais_acquisition(prix, item.get("sale_kind"), c, item)
     tot_fa = sum(l[1] for l in fa)
     trv, trv_f, trv_s = travaux(item, c)
     cout = prix + tot_fa + trv
@@ -96,7 +115,7 @@ def _rental(prix, item, loyer_mensuel_hc, c):
     encaisse = annuel - vacance
     gestion = encaisse * c["gestion_pct"] / 100
     copro = c["charges_copro_non_recup_m2_an"] * sfc
-    tf = c["taxe_fonciere_m2_an"] * sfc
+    tf = annual_tf(item, c)
     pno = c["assurance_pno_an"]
     entretien = annuel * c["entretien_pct_loyer"] / 100
     net_avant_impot = encaisse - gestion - copro - tf - pno - entretien
@@ -141,17 +160,20 @@ def simulate(item, est, rent, c):
                                "Le « prix maximum conseillé » est l'indicateur à retenir.")
 
     # ------------------------------------------------ achat-revente
-    if est and est.get("status") == "ok":
-        valeur = est["valeur"]["central"]
+    manual_val = item.get("valeur_marche_manuel")
+    if manual_val or (est and est.get("status") == "ok"):
+        valeur = float(manual_val) if manual_val else est["valeur"]["central"]
+        bas = float(manual_val) * 0.9 if manual_val else est["valeur"]["bas"]
         r = _resale(prix, item, valeur, c)
         lines = [L("Prix d'acquisition envisagé", prix, prix_src, "donnée annonce" if "mise" in prix_src or "adjudication" in prix_src else "saisi")]
         lines += [L(a, v, f, n) for a, v, f, n in r["fa"]]
         lines += [
             L("Travaux estimés", r["trv"][0], r["trv"][1], r["trv"][2]),
-            L("Charges pendant la détention", r["charges"], f"({c['charges_copro_m2_an']}+{c['taxe_fonciere_m2_an']}) €/m²/an x surface x {c['duree_detention_mois']} mois + {c['energie_assurance_mois']} €/mois", "hypothèse"),
+            L("Charges pendant la détention", r["charges"], f"(copropriété {annual_copro(item, c):.0f} € + taxe foncière {annual_tf(item, c):.0f} €)/an x {c['duree_detention_mois']} mois + {c['energie_assurance_mois']} €/mois",
+              "document" if item.get("charges_copro_an") is not None or item.get("taxe_fonciere_an") is not None else "hypothèse"),
             L("Frais de financement", r["fin"], f"emprunt {r['emprunt']:.0f} € x ({c['taux_credit_pct']}+{c['assurance_emprunteur_pct']}) % x durée + {c['frais_dossier_garantie_pct']} % dossier/garantie" if r["emprunt"] else "apport 100 % : pas de crédit", "hypothèse"),
             L("Coût total de l'opération", r["cout"], "somme des lignes ci-dessus"),
-            L("Prix de revente estimé", valeur, "estimation centrale DVF", "estimé"),
+            L("Prix de revente estimé", valeur, "valeur saisie sur la fiche" if manual_val else "estimation centrale DVF", "saisi" if manual_val else "estimé"),
             L("Frais de revente", r["frais_rev"], f"{c['frais_revente_pct']} % du prix de revente", "hypothèse"),
             L("Bénéfice avant impôt", r["brut"], "revente - frais de revente - coût total"),
             L("Fiscalité indicative", r["impot"][0], r["impot"][1], "estimé"),
@@ -161,12 +183,12 @@ def simulate(item, est, rent, c):
         renta = r["net"] / r["cout"] * 100
         cible = c["marge_cible_pct"]
         maxbid = _bisect(lambda p: (lambda z: z["net"] / z["cout"] * 100)(_resale(p, item, valeur, c)), cible)
-        pess = _resale(prix, item, est["valeur"]["bas"], c)
+        pess = _resale(prix, item, bas, c)
         out["achat_revente"] = {
             "lines": lines, "cout_total": round(r["cout"]), "revente": valeur, "benefice_net": round(r["net"]),
             "marge_nette_pct": round(marge, 1), "rentabilite_pct": round(renta, 1),
             "prix_max_conseille": maxbid, "prix_max_regle": f"bénéfice net / coût total ≥ {cible} %",
-            "scenario_bas": {"revente": est["valeur"]["bas"], "benefice_net": round(pess["net"])},
+            "scenario_bas": {"revente": bas, "benefice_net": round(pess["net"])},
             "prix_envisage": prix,
         }
     else:
@@ -177,6 +199,8 @@ def simulate(item, est, rent, c):
     loyer_cc = None
     if item.get("loyer_manuel"):
         loyer_hc, loyer_src, loyer_nat = float(item["loyer_manuel"]), "loyer mensuel saisi", "saisi"
+    elif item.get("occupation") == "occupé" and item.get("loyer_en_place"):
+        loyer_hc, loyer_src, loyer_nat = float(item["loyer_en_place"]), f"loyer du bail en place ({(item.get('prov') or {}).get('loyer_en_place', 'document')})", "document"
     elif c.get("loyer_m2_manuel"):
         loyer_hc, loyer_src, loyer_nat = c["loyer_m2_manuel"] * sfc, f"{c['loyer_m2_manuel']} €/m² (paramètre) x {sfc:g} m²", "hypothèse"
     elif rent:
@@ -188,7 +212,7 @@ def simulate(item, est, rent, c):
     else:
         out["warnings"].append("Locatif non calculé : aucun indicateur de loyer pour cette commune. Saisissez un loyer sur la fiche.")
         return out
-    if item.get("occupation") == "occupé":
+    if item.get("occupation") == "occupé" and not item.get("loyer_en_place"):
         out["warnings"].append("Bien occupé : le loyer réel (bail en cours) peut différer du loyer de marché estimé.")
     r = _rental(prix, item, loyer_hc, c)
     lines = [L("Prix d'acquisition", prix, prix_src, "donnée annonce")]
@@ -201,7 +225,7 @@ def simulate(item, est, rent, c):
         L("Vacance locative", -r["vacance"], f"{c['vacance_mois_an']} mois/an", "hypothèse"),
         L("Frais de gestion", -r["gestion"], f"{c['gestion_pct']} % des loyers encaissés", "hypothèse"),
         L("Charges de copropriété non récupérables", -r["copro"], f"{c['charges_copro_non_recup_m2_an']} €/m²/an", "hypothèse"),
-        L("Taxe foncière", -r["tf"], f"{c['taxe_fonciere_m2_an']} €/m²/an", "hypothèse"),
+        L("Taxe foncière", -r["tf"], *_src(item, "taxe_fonciere_an", f"{c['taxe_fonciere_m2_an']} €/m²/an")),
         L("Assurance PNO", -r["pno"], "montant annuel saisi", "hypothèse"),
         L("Entretien", -r["entretien"], f"{c['entretien_pct_loyer']} % des loyers", "hypothèse"),
         L("Revenu net annuel avant impôt", r["net"], "loyers - vacance - charges"),

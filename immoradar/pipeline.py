@@ -5,7 +5,7 @@ import threading
 import traceback
 from datetime import date
 
-from . import config, db, estimate, finance, opendata, scoring
+from . import config, db, documents, estimate, finance, opendata, scoring
 from .collectors import ALL as COLLECTORS
 from .geo_fr import ZONES, dep_from_postcode, slugify
 from .net import FetchError, ProtectionDetected, RobotsDisallowed
@@ -15,7 +15,7 @@ _run_lock = threading.Lock()
 
 OVERRIDABLE = {"type", "surface", "rooms", "floor", "address", "city", "postcode", "mise_a_prix", "adjudication_price",
                "sale_date", "occupation", "works_level", "sale_kind", "prix_envisage_manuel", "loyer_manuel",
-               "travaux_manuel", "notes", "status_hint"}
+               "travaux_manuel", "notes", "status_hint", "valeur_marche_manuel"}
 
 
 def criteria_deps(crit):
@@ -45,6 +45,10 @@ def merge(old, new):
     prov = old.setdefault("prov", {})
     for k, v in new.items():
         if k in ("source", "source_id", "url", "prov"):
+            continue
+        if k in ("lots_count", "baisse_mise_a_prix") and prov.get(k) in (src, None):
+            old[k] = v  # la source peut retirer un faux signal (ex. baisse de mise à prix lue comme 2e lot)
+            prov[k] = src
             continue
         if v is None or v == [] or v == {}:
             continue
@@ -106,7 +110,8 @@ def upsert(d, run_id):
 def effective(row):
     data = json.loads(row["data"])
     ov = json.loads(row["overrides"] or "{}")
-    item = dict(data)
+    item = json.loads(row["data"])
+    item["doc_conflicts"] = documents.apply_to_item(item)
     for k, v in ov.items():
         if v not in (None, ""):
             item[k] = v
@@ -230,6 +235,26 @@ def _run(run_id):
             summary["nouvelles"] += st["new"]
             sources.append(st)
 
+        STATE["step"] = "lecture des documents"
+        analysed = 0
+        crit = params["criteres"]
+        for r in db.q("SELECT * FROM listings"):
+            if analysed >= 15:
+                log("Documents : limite de 15 annonces par recherche atteinte, la suite à la prochaine recherche")
+                break
+            data = json.loads(r["data"])
+            if not data.get("documents") or {d.get("url") for d in data["documents"]} <= {d.get("origin") for d in data.get("doc_analyses", [])}:
+                continue
+            item, _, _ = effective(r)
+            if not matches(item, crit, deps):
+                continue
+            n = documents.analyse_listing_documents(data)
+            if n:
+                analysed += 1
+                db.x("UPDATE listings SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), r["id"]))
+        if analysed:
+            log(f"Documents : {analysed} annonce(s) analysée(s)")
+
         STATE["step"] = "géolocalisation"
         ids = [r["id"] for r in db.q("SELECT id FROM listings")]
         for lid in ids:
@@ -347,9 +372,11 @@ def card(row, last_run):
         "floor": item.get("floor"), "city": item.get("city"), "dep": item.get("dep"), "address": item.get("address"),
         "mise_a_prix": item.get("mise_a_prix"), "adjudication_price": item.get("adjudication_price"),
         "sale_date": item.get("sale_date"), "sale_time": item.get("sale_time"), "sale_place": item.get("sale_place"),
+        "doc_count": len([d for d in item.get("doc_analyses") or [] if d.get("status") == "analysé"]),
+        "doc_conflicts": item.get("doc_conflicts") or [],
         "sale_kind": item.get("sale_kind"), "occupation": item.get("occupation"), "photo": (item.get("photos") or [None])[0],
         "sources": item.get("sources"), "first_seen": row["first_seen"], "collected_at": item.get("collected_at"),
-        "risks": item.get("risks") or [], "works_level": item.get("works_level"), "features": item.get("features") or {},
+        "risks": [r for r in item.get("risks") or [] if r.get("severity", 1) > 0], "works_level": item.get("works_level"), "features": item.get("features") or {},
         "estimation": {"status": est.get("status"), "central": (est.get("valeur") or {}).get("central"),
                        "confidence": est.get("confidence"), "confidence_label": est.get("confidence_label")},
         "score_revente": rv.get("score"), "score_locatif": lo.get("score"), "decote_pct": sc.get("decote_pct"),

@@ -33,16 +33,19 @@ def penalties(item, mode):
     elif not occ:
         out.append(("Occupation inconnue", -4))
     for r in item.get("risks") or []:
-        if r["code"] in ("occupe", "bail") :
-            continue  # déjà compté via l'occupation
-        out.append((r["label"], {3: -20, 2: -8, 1: -2}[r["severity"]]))
+        if r["code"] in ("occupe", "bail") or r.get("severity", 1) <= 0 or r.get("scope") == "info":
+            continue  # occupation déjà comptée ; informations sans impact
+        if r.get("scope") == "locatif" and mode != "locatif":
+            continue
+        out.append((r["label"], {3: -20, 2: -8, 1: -2}.get(r["severity"], -2)))
     return out
 
 
-def _finish(parts, pens, item):
+def _finish(parts, pens, item, mode):
     score = sum(p[1] for p in parts) + sum(p[1] for p in pens)
     score = max(0, min(100, score))
-    major = [r["label"] for r in item.get("risks") or [] if r["severity"] >= 3]
+    major = [r["label"] for r in item.get("risks") or [] if r.get("severity", 1) >= 3
+             and (r.get("scope") in (None, "all") or r.get("scope") == mode)]
     capped = False
     if major and score > 40:
         score, capped = 40, True
@@ -55,8 +58,10 @@ def score(item, est, sim):
     res = {"revente": None, "locatif": None, "decote_pct": None}
     prix = (sim.get("achat_revente") or sim.get("locatif") or {}).get("prix_envisage") or item.get("mise_a_prix")
     decote = None
-    if est and est.get("status") == "ok" and prix:
-        decote = (1 - prix / est["valeur"]["central"]) * 100
+    central = float(item["valeur_marche_manuel"]) if item.get("valeur_marche_manuel") else (
+        est["valeur"]["central"] if est and est.get("status") == "ok" else None)
+    if central and prix:
+        decote = (1 - prix / central) * 100
         res["decote_pct"] = round(decote, 1)
     conf = (est or {}).get("confidence") or 0
     comp = completeness(item)
@@ -69,7 +74,7 @@ def score(item, est, sim):
                  ("Marge de manœuvre (prix max / prix envisagé)", lin(head, 0, 60, 15)),
                  ("Qualité des comparables", conf / 100 * 15),
                  ("Fiabilité des informations", comp * 10)]
-        res["revente"] = _finish(parts, penalties(item, "revente"), item)
+        res["revente"] = _finish(parts, penalties(item, "revente"), item, "revente")
 
     lo = sim.get("locatif")
     if lo:
@@ -80,5 +85,5 @@ def score(item, est, sim):
                  ("Marge de manœuvre (prix max / prix envisagé)", lin(head, 0, 60, 15)),
                  ("Qualité des comparables / loyers", (conf / 100 * 15) if est and est.get("status") == "ok" else 5),
                  ("Fiabilité des informations", comp * 10)]
-        res["locatif"] = _finish(parts, penalties(item, "locatif"), item)
+        res["locatif"] = _finish(parts, penalties(item, "locatif"), item, "locatif")
     return res

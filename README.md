@@ -45,6 +45,25 @@ pages par politesse), puis les fichiers DVF des départements concernés sont t�
 - Toutes les hypothèses de calcul sont visibles ligne par ligne et modifiables (Paramètres, ou par fiche).
 - Un risque juridique majeur (démembrement, squat, péril, copropriété en difficulté) plafonne la note à 40.
 
+## Documents de vente (PV descriptif, cahier des conditions de vente, diagnostics)
+
+Sur chaque fiche, « Ce que disent les documents » :
+- **Analyser les documents liés** : télécharge les PDF liés à l'annonce si le robots.txt du site l'autorise
+  (sinon l'application le dit et vous déposez le PDF vous-même) ; la recherche le fait aussi automatiquement
+  (15 annonces au plus par recherche) ;
+- **Déposer un PDF** ou **coller le texte** d'un document.
+
+Ce qui est extrait (avec page et citation) : occupation (prime sur l'annonce), état général et nombre de défauts
+relevés (niveau de travaux), surface Carrez, vente en un seul lot, faculté de baisse de la mise à prix, frais
+préalables, charges et taxe foncière, DPE (G/F : risque pour la location), liquidation judiciaire, vente annulée
+par le passé, résidence sociale, bien décrit comme « chambre », hypothèques, servitudes, amiante/plomb/termites…
+Les prix ou comparables cités dans le document sont affichés mais ne remplacent jamais l'estimation DVF.
+Les écarts entre l'annonce et le document (surface, mise à prix, occupation) sont signalés.
+
+Lecture des PDF : `pdftotext` (poppler) est nécessaire ; pour les PDF scannés, `tesseract` avec le français.
+macOS : `brew install poppler tesseract tesseract-lang`. Debian/Ubuntu : `apt install poppler-utils tesseract-ocr tesseract-ocr-fra`.
+L'image Docker (Render) les inclut. Sans OCR, un PDF scanné est signalé « illisible » : collez alors son texte.
+
 ## Tests
 
 ```bash
